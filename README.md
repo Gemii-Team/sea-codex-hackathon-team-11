@@ -19,7 +19,7 @@ In the demo **you play the scammer**. Everything is a simulation with fictional 
 5. **Scam network.** **Scam network** in the sidebar opens an investigation dashboard on **mock data**: 18 fictional entities, 24 evidence-linked relationships and 3 cases, with filters, search, path finding, a timeline and JSON export. It shows where collected clues would go next.
 6. **Language.** The interface opens in English. **EN | ไทย** in the top bar switches every page to Thai; Yai always speaks Thai.
 
-Voice calls are open until **23:59 Bangkok time on 21 Nov 2026** (no new call starts after 23:55). After that, calls are refused, but chat, the notebook, review and the network page keep working. See [Spend and abuse limits](#spend-and-abuse-limits).
+Voice calls are open until **23:59 Bangkok time on 21 Nov 2026** (no new call starts after 23:55). After that, calls are refused, but chat, the notebook, review and the network page keep working. **Judging after the cutoff?** Use chat (steps 1, 2, 4–6). The call behaviour is documented in the [evaluation](#evaluation) and the description of how voice works. See [Spend and abuse limits](#spend-and-abuse-limits).
 
 ---
 
@@ -126,7 +126,7 @@ The app is public, so the server alone protects the OpenAI key. None of these li
 ## Run and test locally
 
 ```sh
-# Yai Mali: Node 22+, no dependencies to install.
+# Yai Mali: tested on Node 26 (the image pins node:26.13.1); no dependencies to install.
 cat > /tmp/yai.env <<'ENV'
 HOST=127.0.0.1
 PORT=8080
@@ -160,4 +160,4 @@ To run Agent Studio locally, run `make up` (Docker Compose), then open <http://l
 - Each browser keeps its own notebook. There is no shared case store and no reporting integration; export is a file download.
 - The evaluation checks what Yai says, using voice in text mode. How she sounds was checked by hand on live calls.
 - Clue extraction uses patterns, so unusual formats can be missed. Every clue needs human review, which the UI enforces with the *Unverified* label and the review step.
-- Amazon Connect was planned for phone-number calls, but the account's concurrent-call quota is 0, so all voice goes through OpenAI Realtime.
+- Amazon Connect was planned for phone-number calls, but the team's Connect instance has an applied concurrent-call quota of 0 (the account default is 10), so all voice goes through OpenAI Realtime.
