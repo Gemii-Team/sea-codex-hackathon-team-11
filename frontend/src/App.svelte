@@ -17,10 +17,28 @@
   function loadAgents() {
     try {
       const saved = JSON.parse(localStorage.getItem(storageKey) ?? '[]');
-      return Array.isArray(saved) ? saved : [];
+      if (!Array.isArray(saved)) return [];
+      const drafts = new Map();
+      for (const entry of saved) {
+        if (typeof entry?.id !== 'string' || !entry.id.trim()) continue;
+        const draft = { ...emptyAgent };
+        for (const key of Object.keys(emptyAgent)) {
+          if (typeof entry[key] === 'string') draft[key] = entry[key];
+        }
+        if (isTimestamp(entry.updatedAt)) draft.updatedAt = entry.updatedAt;
+        if (Object.hasOwn(scenarios, entry.lastTest?.scenario) && isTimestamp(entry.lastTest.at)) {
+          draft.lastTest = entry.lastTest;
+        }
+        drafts.set(draft.id, draft);
+      }
+      return [...drafts.values()];
     } catch {
       return [];
     }
+  }
+
+  function isTimestamp(value) {
+    return typeof value === 'string' && Number.isFinite(Date.parse(value));
   }
 
   let agents = $state(loadAgents());
@@ -30,7 +48,9 @@
   let tried = $state(false);
   let feedback = $state('');
   let search = $state('');
-  const dateFormat = new Intl.DateTimeFormat('th-TH', { dateStyle: 'medium', timeStyle: 'short' });
+  const dateFormat = new Intl.DateTimeFormat('th-TH', {
+    year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit'
+  });
   const hasConnectDetails = (saved) => [saved.region, saved.instance, saved.flow, saved.number]
     .every((value) => value?.trim());
   let configured = $derived(agents.filter(hasConnectDetails).length);
