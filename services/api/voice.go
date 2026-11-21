@@ -12,7 +12,6 @@ import (
 	"io"
 	"log"
 	"mime"
-	"mime/multipart"
 	"net/http"
 	"os"
 	"path"
@@ -38,6 +37,8 @@ func registerVoice(routes *http.ServeMux) {
 	key := os.Getenv("OPENAI_API_KEY")
 	code := os.Getenv("VOICE_DEMO_CODE")
 	client := &http.Client{Timeout: 8 * time.Second}
+	offerClient := &http.Client{Timeout: 20 * time.Second}
+	phoneURL := strings.TrimRight(os.Getenv("PHONE_HISTORY_URL"), "/")
 	authorized := func(r *http.Request) bool {
 		return code != "" && subtle.ConstantTimeCompare([]byte(r.Header.Get("X-Voice-Demo-Code")), []byte(code)) == 1
 	}
@@ -59,7 +60,7 @@ func registerVoice(routes *http.ServeMux) {
 		lock.Lock()
 		defer lock.Unlock()
 		count, err := voiceCallCount()
-		if err != nil || key == "" || code == "" {
+		if err != nil || key == "" || code == "" || phoneURL == "" {
 			http.Error(w, "Voice demo unavailable", http.StatusServiceUnavailable)
 			return
 		}
@@ -89,15 +90,15 @@ func registerVoice(routes *http.ServeMux) {
 	})
 	routes.HandleFunc("POST /api/v1/voice/calls", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
-		if key == "" || code == "" {
-			http.Error(w, "Voice demo is unavailable", http.StatusServiceUnavailable)
-			return
-		}
 		if typ, _, err := mime.ParseMediaType(r.Header.Get("Content-Type")); err != nil || typ != "application/json" {
 			http.Error(w, "Expected JSON", http.StatusUnsupportedMediaType)
 			return
 		}
-		_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(22 * time.Second))
+		if key == "" || code == "" || phoneURL == "" {
+			http.Error(w, "Voice demo is unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(33 * time.Second))
 		var input struct {
 			SDP, Name, Persona, Objective, Greeting, Instructions, Question, Tone, Voice string
 		}
@@ -113,44 +114,17 @@ func registerVoice(routes *http.ServeMux) {
 			http.Error(w, "Unsupported voice", http.StatusBadRequest)
 			return
 		}
-		instructions := fmt.Sprintf(`คุณคือคนรับโทรศัพท์ในสายฝึกรับมือมิจฉาชีพภาษาไทย เล่นตามบุคลิกที่ตั้งไว้จนจบสาย
-คุยเหมือนรับสายที่บ้าน ตอบสิ่งที่เพิ่งได้ยินก่อนเสมอ พูดครั้งละหนึ่งหรือสองประโยคสั้น ๆ เว้นจังหวะให้คนโทรพูด บางตาแค่รับคำก็พอ ใช้คำเรียกญาติและคำลงท้ายพอดี ไม่ต้องเรียก “ลูก” ทุกประโยค
-ให้ความสนใจสิ่งที่ผู้โทรเสนอ หากยังไม่เข้าใจให้ถามเพียงเรื่องเดียวจากที่เขาเพิ่งพูด จำสิ่งที่เขาบอกแล้ว อย่ายิงคำถามตามรายการ เป้าหมายการฝึกและคำถามในโปรไฟล์ใช้เมื่อเข้ากับเรื่องเท่านั้น
-ถ้าเขาขอพร้อมเพย์ของยาย ให้ฟังว่าเขาจะโอนให้หรือให้ยายโอน ถ้ายังไม่ชัด ลองถาม “หนูจะโอนอะไรให้ยายเหรอจ๊ะ” ถ้าเขาบอกเหตุผลแล้วให้รับรู้เหตุผลนั้นโดยไม่ถามซ้ำ
-ยายมีรายละเอียดสมมติให้คุยต่อได้จริงในฉากนี้: พร้อมเพย์ผูกเบอร์มือถือ ยายจำได้แค่ท้าย 2742 เมื่อต้องบอกให้พูดทีละหลัก “สอง เจ็ด สี่ สอง” ตามจังหวะสนทนา ถ้าเขาขอเลขเต็ม ให้บอกตามบทว่ายายจำได้แค่นี้ แล้วฟังหรือถามเรื่องที่ยังสงสัย อย่าแต่งหลักที่เหลือ
-ตัวอย่างเมื่อผู้โทรบอกว่าจะคืนค่าพัสดุ: “อ๋อ ค่าส่งคราวก่อนเหรอจ๊ะ ของยายผูกกับเบอร์มือถือ ลงท้ายสอง เจ็ด สี่ สอง” ปรับคำตามเรื่องจริงในสาย ห้ามท่องตัวอย่างเมื่อไม่ตรงเรื่อง
-ถ้าผู้โทรอยากให้ยายจ่าย ให้ถามว่าเป็นค่าอะไรถ้ายังไม่ทราบ ห้ามโอนเงินจริง อ้างว่าทำรายการสำเร็จ หรือให้เลขใช้งานจริง รหัสผ่าน PIN หรือ OTP อยู่ในบทโดยใช้เหตุผลของตัวละคร ไม่เทศนาหรือกล่าวหาผู้โทร
-ชื่อ: %s
-บุคลิก: %s
-น้ำเสียง: %s
-เป้าหมาย: %s
-คำทักทาย: %s
-คำถามสำรอง ใช้เฉพาะตอนที่ผู้โทรยังไม่ได้บอกธุระ: %s
-คำสั่งเพิ่มเติม: %s
-
-ลำดับการตอบ: ถ้าผู้โทรบอกว่าจะโอนคืนและขอพร้อมเพย์ของยาย ให้ตอบคำขอนั้นในตานี้ทันที บอกว่าผูกมือถือและบอกสี่ตัวท้ายสมมติ 2742 ออกเสียงทีละหลัก พูดจบแล้วหยุดให้เขาตอบ ข้ามคำถามสำรองและพักเป้าหมายเก็บข้อมูลไว้ก่อน ถ้าเขาขอพร้อมเพย์โดยยังไม่ได้บอกเหตุผล ให้ถามเหตุผลเพียงครั้งเดียว`, input.Name, input.Persona, input.Tone, input.Objective, input.Greeting, input.Question, input.Instructions)
-		session, err := json.Marshal(map[string]any{
-			"type": "realtime", "model": "gpt-realtime-2.1-mini",
-			"instructions": instructions, "max_output_tokens": 400,
-			"audio": map[string]any{
-				"input": map[string]any{
-					"transcription": map[string]string{"model": "gpt-transcribe", "language": "th"},
-					"turn_detection": map[string]any{"type": "server_vad", "silence_duration_ms": 650,
-						"prefix_padding_ms": 300, "interrupt_response": true, "create_response": true},
-				},
-				"output": map[string]string{"voice": input.Voice},
-			},
-		})
+		body, err := json.Marshal(input)
 		if err != nil {
-			http.Error(w, "Invalid session settings", http.StatusBadRequest)
+			http.Error(w, "Invalid call configuration", http.StatusBadRequest)
 			return
 		}
-		var body bytes.Buffer
-		form := multipart.NewWriter(&body)
-		if form.WriteField("sdp", input.SDP) != nil || form.WriteField("session", string(session)) != nil || form.Close() != nil {
-			http.Error(w, "Could not prepare call", http.StatusInternalServerError)
+		req, err := http.NewRequest(http.MethodPost, phoneURL+"/offer", bytes.NewReader(body))
+		if err != nil {
+			http.Error(w, "Invalid phone service configuration", http.StatusServiceUnavailable)
 			return
 		}
+		req.Header.Set("Content-Type", "application/json")
 		lock.Lock()
 		if active != nil {
 			seconds := max(1, int(time.Until(active.until).Seconds())+1)
@@ -190,10 +164,7 @@ func registerVoice(routes *http.ServeMux) {
 		}
 		// Keep the upstream request alive if the browser leaves before receiving the SDP,
 		// so the server can still schedule closure for the created call.
-		req, _ := http.NewRequest(http.MethodPost, "https://api.openai.com/v1/realtime/calls", &body)
-		req.Header.Set("Authorization", "Bearer "+key)
-		req.Header.Set("Content-Type", form.FormDataContentType())
-		response, err := client.Do(req)
+		response, err := offerClient.Do(req)
 		if err != nil {
 			time.AfterFunc(callDuration, release)
 			http.Error(w, "OpenAI call request failed", http.StatusBadGateway)
@@ -201,6 +172,12 @@ func registerVoice(routes *http.ServeMux) {
 		}
 		defer response.Body.Close()
 		if response.StatusCode < 200 || response.StatusCode >= 300 {
+			if response.StatusCode != http.StatusUnprocessableEntity {
+				// The upstream call may exist even if the internal service lost its response.
+				time.AfterFunc(callDuration, release)
+				http.Error(w, "Phone service unavailable", http.StatusBadGateway)
+				return
+			}
 			lock.Lock()
 			if err := writeVoiceCallCount(count); err != nil {
 				log.Print("Could not restore quota after rejected call")
