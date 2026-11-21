@@ -1,0 +1,4 @@
+# Copy to terraform.tfvars (gitignored) and fill in.
+budget_email = "you@example.com"
+
+# ingress_mode = "public"   # switch from Cloudflare Tunnel to Elastic IP + Caddy
