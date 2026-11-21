@@ -1,0 +1,94 @@
+/* Palette and type follow frontend/src/portal.css (the team portal). */
+:root {
+  color-scheme: light;
+  font-family: "Noto Sans Thai", system-ui, -apple-system, "Segoe UI", sans-serif;
+  color: #222b28;
+  background: #f5f6f3;
+  font-synthesis: none;
+  --forest: #152b25;
+  --ink: #252d2a;
+  --muted: #52615b;
+  --border: #dfe6e0;
+  --lavender: #ede8fb;
+  --mint: #c5edab;
+  --white: #fff;
+  --error-bg: #fdecea;
+  --error-ink: #8a1c13;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; line-height: 1.55; }
+a { color: #345842; text-underline-offset: 3px; }
+:focus-visible { outline: 3px solid #7660b2; outline-offset: 3px; }
+
+.skip {
+  position: absolute;
+  left: 12px;
+  top: -60px;
+  background: var(--white);
+  color: var(--ink);
+  padding: 10px 14px;
+  border-radius: 8px;
+  z-index: 10;
+}
+.skip:focus { top: 12px; }
+
+.top { background: var(--forest); color: #f5faf6; padding: 14px clamp(18px, 4vw, 54px); }
+.brand { display: flex; gap: 12px; align-items: center; font-weight: 760; }
+.brand small { display: block; margin-top: 1px; color: #bed3c8; font-size: .75rem; font-weight: 450; }
+.mark { display: flex; align-items: center; justify-content: center; gap: 3px; width: 38px; height: 38px; border-radius: 11px; background: var(--mint); }
+.mark i { width: 2px; height: 11px; border-radius: 2px; background: var(--forest); }
+.mark i:nth-child(2), .mark i:nth-child(4) { height: 17px; }
+.mark i:nth-child(3) { height: 23px; }
+
+/* Bottom padding keeps content clear of the floating AWS widget button. */
+main { width: min(100%, 1100px); margin-inline: auto; padding: 0 clamp(18px, 4vw, 54px) 140px; }
+
+.hero {
+  margin: 26px 0 20px;
+  padding: clamp(18px, 3.1vw, 35px);
+  border: 1px solid #d6e0d6;
+  border-radius: 15px;
+  background: linear-gradient(108deg, #f0ecfb 0%, #f3f5ef 58%, #e4f1db 100%);
+}
+.hero p { margin: 10px 0 0; max-width: 60ch; color: #43564b; }
+h1 { font-size: clamp(1.9rem, 4.6vw, 3rem); line-height: 1.1; letter-spacing: -.04em; margin: 0; }
+h2 { margin: 0 0 10px; font-size: 1.12rem; }
+
+.columns { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(260px, 1fr); gap: 18px; align-items: start; }
+.stack { display: grid; gap: 16px; }
+.card { min-width: 0; background: var(--white); border: 1px solid var(--border); border-radius: 13px; padding: clamp(16px, 2.2vw, 24px); }
+.card p { margin: 8px 0; }
+.card ol, .card ul { margin: 8px 0; padding-left: 1.3em; }
+.card li { margin: 7px 0; }
+.muted { color: var(--muted); font-size: .9rem; }
+q { font-weight: 650; }
+
+.status-line { padding: 9px 12px; border-radius: 8px; background: #f0f4ef; border: 1px solid var(--border); color: var(--ink); }
+.status-line[data-state="working"] { background: var(--lavender); border-color: #cfc5ee; }
+.status-line[data-state="error"] { background: var(--error-bg); border-color: #e6b3ad; color: var(--error-ink); }
+.status-line[data-state="error"]::before { content: "! "; font-weight: 800; }
+
+.error { margin: 10px 0; padding: 10px 12px; border-radius: 8px; background: var(--error-bg); color: var(--error-ink); border: 1px solid #e6b3ad; }
+.error[hidden] { display: none; }
+
+.button { border: 1px solid var(--forest); background: var(--forest); color: #fafff8; border-radius: 8px; padding: 9px 15px; min-height: 40px; font: inherit; font-weight: 700; cursor: pointer; }
+.button:hover { background: #2a4a3e; }
+.button[hidden] { display: none; }
+
+details { margin-top: 10px; }
+summary { cursor: pointer; font-weight: 650; padding: 4px 0; }
+
+.attempts { list-style: none; padding: 0; }
+.attempts li { padding: 7px 0; border-top: 1px solid var(--border); font-size: .9rem; overflow-wrap: anywhere; }
+.attempts li:first-child { border-top: 0; }
+.attempts time { font-variant-numeric: tabular-nums; font-weight: 650; }
+
+footer { margin-top: 20px; }
+
+@media (max-width: 860px) {
+  .columns { grid-template-columns: minmax(0, 1fr); }
+}
+@media (prefers-reduced-motion: reduce) {
+  * { scroll-behavior: auto !important; transition: none !important; animation: none !important; }
+}

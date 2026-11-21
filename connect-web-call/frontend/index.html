@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex" />
+    <meta name="color-scheme" content="light" />
+    <title>Team 11 · Call Amazon Connect from your browser</title>
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23c5edab'/%3E%3Cpath d='M9 14v4M13 11v10M17 8v16M21 11v10M25 14v4' stroke='%23152b25' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E"
+    />
+    <link rel="stylesheet" href="/styles.css" />
+    <script type="module" src="/call.js"></script>
+  </head>
+  <body>
+    <a class="skip" href="#main">Skip to the call instructions</a>
+    <header class="top">
+      <div class="brand">
+        <span class="mark" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span>
+        <span>Team 11<small>Amazon Connect call proof</small></span>
+      </div>
+    </header>
+
+    <main id="main">
+      <section class="hero">
+        <h1>Call Amazon Connect from your browser</h1>
+        <p>
+          A short test of a browser call to Amazon Connect. You will hear a synthesized greeting, then
+          the call is designed to end. This is a demo for team members using simulated calls only.
+        </p>
+      </section>
+
+      <div class="columns">
+        <div class="stack">
+          <section class="card" aria-labelledby="status-title">
+            <h2 id="status-title">Call widget</h2>
+            <p id="widget-status" class="status-line" role="status" data-state="pending">
+              Loading call configuration…
+            </p>
+            <p id="widget-error" class="error" role="alert" hidden></p>
+            <noscript><p class="error">This page needs JavaScript to load the call widget.</p></noscript>
+            <button id="reload" class="button" type="button" hidden>Reload page</button>
+          </section>
+
+          <section class="card" aria-labelledby="steps-title">
+            <h2 id="steps-title">What will happen</h2>
+            <ol>
+              <li>
+                Call controls appear in the <strong>lower right</strong> of this page once the Amazon
+                Connect widget loads. If they don&rsquo;t appear, see the status above.
+              </li>
+              <li>
+                Use the call controls to start the call. Your browser asks to use the microphone: choose
+                <strong>Allow</strong>. Nothing is called when this page opens.
+              </li>
+              <li>
+                Listen for: <q>Team Eleven. Your browser is connected to Amazon Connect.</q> The call is
+                designed to end after the greeting.
+              </li>
+            </ol>
+            <p class="muted">
+              This page never shows a &ldquo;connected&rdquo; state of its own. The greeting is synthesized
+              speech, not a recording. Hearing it shows audio playing from Amazon Connect to you; it does
+              not show that your voice reached Amazon Connect.
+            </p>
+          </section>
+
+          <section class="card" aria-labelledby="mic-title">
+            <h2 id="mic-title">Microphone</h2>
+            <p id="mic-status" class="status-line" role="status">Checking microphone permission…</p>
+            <details>
+              <summary>Blocked, or no prompt appeared?</summary>
+              <ul>
+                <li>
+                  <strong>Chrome or Edge:</strong> choose the site-settings icon left of the address bar,
+                  set <em>Microphone</em> to Allow, then reload this page and try again.
+                </li>
+                <li>
+                  <strong>Firefox:</strong> choose the permissions icon left of the address bar, remove
+                  the blocked microphone entry, then reload and try again.
+                </li>
+                <li>
+                  <strong>Safari:</strong> Safari &rarr; Settings &rarr; Websites &rarr; Microphone, set
+                  this site to Allow, then reload.
+                </li>
+                <li>
+                  <strong>Connected but silent?</strong> Check that this tab is not muted and that your
+                  output device and volume are right.
+                </li>
+              </ul>
+            </details>
+          </section>
+        </div>
+
+        <div class="stack">
+          <section class="card" aria-labelledby="hangup-title">
+            <h2 id="hangup-title">Hang up</h2>
+            <p>
+              Use the widget&rsquo;s hang-up control to end the call. Closing or minimizing the widget may
+              not end it. The call is designed to disconnect after the greeting: for the acceptance test,
+              let it finish by itself, then press hang-up if it is still connected.
+            </p>
+            <p>To try again, start a new call from the widget. If it refuses, reload this page first.</p>
+          </section>
+
+          <section class="card" aria-labelledby="log-title">
+            <h2 id="log-title">This browser&rsquo;s call attempts (UTC)</h2>
+            <p class="muted">
+              A token request means this page asked permission to call. It does not prove any audio was
+              heard.
+            </p>
+            <ol id="attempts" class="attempts">
+              <li id="attempts-empty" class="muted">No attempts yet.</li>
+            </ol>
+          </section>
+        </div>
+      </div>
+
+      <footer>
+        <p class="muted">
+          Nothing on this page records audio. If the widget says it cannot connect, see the
+          <a
+            href="https://docs.aws.amazon.com/connect/latest/adminguide/videocalling-networking-requirements.html"
+            target="_blank"
+            rel="noopener noreferrer"
+            >AWS network requirements</a
+          >.
+        </p>
+      </footer>
+    </main>
+  </body>
+</html>
