@@ -48,6 +48,7 @@
   let tried = $state(false);
   let feedback = $state('');
   let search = $state('');
+  let connectFilter = $state('all');
   const dateFormat = new Intl.DateTimeFormat('th-TH', {
     year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit'
   });
@@ -55,8 +56,11 @@
     .every((value) => value?.trim());
   let configured = $derived(agents.filter(hasConnectDetails).length);
   let tested = $derived(agents.filter((saved) => saved.lastTest).length);
-  let visibleAgents = $derived(agents.filter((saved) => [saved.name, saved.business, saved.number]
-    .some((value) => value?.toLowerCase().includes(search.trim().toLowerCase()))));
+  let query = $derived(search.trim().toLowerCase());
+  let visibleAgents = $derived(agents.filter((saved) =>
+    (connectFilter === 'all' || hasConnectDetails(saved) === (connectFilter === 'configured')) &&
+    [saved.name, saved.business, saved.number].some((value) => value.toLowerCase().includes(query))
+  ).sort((a, b) => (b.updatedAt ?? '').localeCompare(a.updatedAt ?? '')));
 
   function edit(saved = emptyAgent) {
     agent = { ...emptyAgent, ...saved };
@@ -124,14 +128,26 @@
       <section class="card" aria-labelledby="agent-list">
         <div class="list-heading">
           <div><h2 id="agent-list">Agents</h2><p class="muted">ร่างและผลทดสอบที่บันทึกในเบราว์เซอร์นี้</p></div>
-          {#if agents.length}
-            <label>ค้นหา Agent<input type="search" placeholder="ชื่อ ธุรกิจ หรือเบอร์รับสาย" bind:value={search} /></label>
-          {/if}
         </div>
+        {#if agents.length}
+          <div class="list-filters">
+            <label>ค้นหา Agent<input type="search" placeholder="ชื่อ ธุรกิจ หรือเบอร์รับสาย" bind:value={search} /></label>
+            <label>สถานะ Connect
+              <select bind:value={connectFilter}>
+                <option value="all">ทุกสถานะ</option>
+                <option value="configured">กรอกข้อมูลครบ</option>
+                <option value="incomplete">ยังกรอกไม่ครบ</option>
+              </select>
+            </label>
+          </div>
+        {/if}
         {#if agents.length === 0}
           <p class="empty-list">ยังไม่มี Agent ที่บันทึกไว้ เริ่มจากสร้าง Agent และลองบทสนทนาจำลองได้เลย</p>
         {:else if visibleAgents.length === 0}
-          <p class="empty-list" role="status">ไม่พบ Agent ที่ตรงกับการค้นหา</p>
+          <div class="empty-list">
+            <p role="status">ไม่พบ Agent ที่ตรงกับตัวกรอง</p>
+            <button class="button secondary" onclick={() => { search = ''; connectFilter = 'all'; }}>ล้างตัวกรอง</button>
+          </div>
         {:else}
           <div class="agent-table">
             <table aria-label="รายชื่อ Agents">
@@ -139,7 +155,12 @@
               <tbody>
                 {#each visibleAgents as saved (saved.id)}
                   <tr>
-                    <td><button class="agent-link" onclick={() => edit(saved)}>{saved.name}</button><small>{saved.business || '—'}</small></td>
+                    <td>
+                      <div class="agent-identity">
+                        <span class="agent-avatar" aria-hidden="true">{Array.from(saved.name)[0] || 'A'}</span>
+                        <div><button class="agent-link" onclick={() => edit(saved)}>{saved.name}</button><small>{saved.business || '—'}</small></div>
+                      </div>
+                    </td>
                     <td><span class={['setup-status', { configured: hasConnectDetails(saved) }]}>{hasConnectDetails(saved) ? 'กรอกข้อมูลครบ' : 'ยังกรอกไม่ครบ'}</span><small>{saved.number || '—'}</small></td>
                     <td>{saved.lastTest ? scenarios[saved.lastTest.scenario]?.label : 'ยังไม่ได้ทดสอบ'}{#if saved.lastTest}<small>{dateFormat.format(new Date(saved.lastTest.at))}</small>{/if}</td>
                     <td>{saved.updatedAt ? dateFormat.format(new Date(saved.updatedAt)) : '—'}</td>
