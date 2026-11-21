@@ -27,6 +27,19 @@ node --env-file="$HOME/.config/yai-mali/dev.env" yai-mali-web/backend/server.mjs
 node --test yai-mali-web/backend/*.test.mjs        # offline: fake upstream, no billable call
 ```
 
+## Persona
+
+`backend/persona.mjs` is the only place Yai's instructions live: chat and voice share one persona, and the voice call adds the voice, turn-taking, unclear-audio and silence rules. It merges the team's two Yai Mali prompts. Yai never confirms she is an AI, never pays, never gives a code and never invents or "fixes" a number the caller gave.
+
+After any wording change, run the live check. It costs well under a dollar, uses a throwaway chat counter, and exits 1 on any failed reply:
+
+```sh
+OPENAI_API_KEY=<key> node yai-mali-web/eval/persona-eval.mjs                 # 15 chat cases x2, 4 openings + 6 cases on voice
+OPENAI_API_KEY=<key> node yai-mali-web/eval/persona-eval.mjs --case otp --repeat 3
+```
+
+Chat goes through the production provider and model; voice uses the production Realtime model and instructions in text mode (what Yai says, not how she sounds). Each reply gets code checks (invented digits, payment claims, admitting to being an AI, markdown) and a judge model's verdict against the case's expectation. Add a case for every behaviour you fix.
+
 ## Deploy
 
 Run from the repository root. Every command goes through `connect-web-call/bin/with-aws hosting`, which passes only the hosting AWS and Cloudflare credentials; `deploy` re-runs itself under it. Never run `infra/hosting/bin/deploy` or `connect-web-call/deploy/deploy` for this app.

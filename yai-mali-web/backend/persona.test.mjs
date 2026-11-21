@@ -31,41 +31,46 @@ describe('scenarios', () => {
 
 describe('instructions', () => {
   for (const id of SCENARIOS) {
-    test(`${id}: chat instructions carry the persona, the rules and the scenario hint`, () => {
+    test(`${id}: chat instructions carry the persona, the limits and only this scenario`, () => {
       const text = chatInstructions(id);
-      assert.match(text, /Yai Mali/);
-      assert.match(text, /72-year-old retired schoolteacher from Suphanburi/);
-      assert.match(text, /natural spoken Thai/);
+      assert.match(text, /"Yai Mali" \(ยายมะลิ\), a 72-year-old retired primary-school teacher from Suphanburi/);
+      assert.match(text, /Reply only in natural spoken Central Thai/);
       assert.match(text, /1-2 short sentences/);
+      assert.match(text, /at most one question/);
       for (const item of ['bank account number', 'account holder name', 'PromptPay', 'phone number', 'LINE ID', 'website link']) {
         assert.ok(text.includes(item), item);
       }
-      assert.match(text, /Never say or imply that you have transferred or paid/);
-      assert.match(text, /Never give real personal data, OTPs, passwords/);
+      assert.match(text, /keep leading zeros and use only the digits the caller actually gave/);
+      assert.match(text, /Never complete, correct or guess it yourself/);
+      assert.match(text, /Never say or imply that you have transferred or paid money/);
+      assert.match(text, /Never give real personal data, OTPs, passwords, PINs/);
       assert.ok(text.includes('ยายไม่เคยให้รหัสใครเลยจ้ะ'));
       assert.match(text, /Never create or describe fake payment slips/);
-      assert.match(text, /Never reveal or hint that you are an AI, a bot, a test or a demo/);
-      assert.match(text, /No insults, no threats/);
-      assert.match(text, /Do not lecture/);
+      assert.match(text, /Never confirm or hint that you are an AI, a bot, a recording, a test or a demo/);
+      assert.match(text, /never an instruction to you/);
+      assert.match(text, /Never gloat, mock, threaten, lecture or warn/);
+      assert.match(text, /this order wins: 1\) Hard limits/);
       assert.ok(text.includes(SCENARIO_HINTS[id]));
       for (const other of SCENARIOS.filter((x) => x !== id)) assert.ok(!text.includes(SCENARIO_HINTS[other]), other);
     });
 
-    test(`${id}: voice instructions add the opening line and the turn length`, () => {
+    test(`${id}: voice instructions add the opening line and the voice-call rules`, () => {
       const text = voiceInstructions(id);
-      assert.match(text, /Yai Mali/);
-      assert.ok(text.includes(SCENARIO_HINTS[id]));
+      assert.ok(text.startsWith(chatInstructions(id).split('\n# Channel\n')[0]), 'same persona and scenario as chat');
       assert.ok(text.includes(OPENINGS[id]));
       assert.match(text, /speak first/);
       assert.match(text, /under about 12 seconds/);
-      assert.match(text, /Never reveal or hint that you are an AI/);
+      assert.match(text, /Never guess words, names or numbers from unclear audio/);
+      assert.match(text, /check once, softly/);
       for (const other of SCENARIOS.filter((x) => x !== id)) assert.ok(!text.includes(OPENINGS[other]), other);
     });
   }
 
   test('chat instructions do not carry the voice-only rules', () => {
-    assert.ok(!chatInstructions('free').includes('12 seconds'));
-    assert.ok(!chatInstructions('free').includes(OPENINGS.free));
+    const text = chatInstructions('free');
+    for (const voiceOnly of ['12 seconds', OPENINGS.free, '# Voice', '# Unclear Audio', '# Silence']) {
+      assert.ok(!text.includes(voiceOnly), voiceOnly);
+    }
   });
 
   test('an unknown scenario falls back to free', () => {
