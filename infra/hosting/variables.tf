@@ -79,3 +79,53 @@ variable "budget_limit_usd" {
   type    = number
   default = 30
 }
+
+# The registry has been provisioned in this hosting stack. Publishing the hostname remains opt-in.
+
+variable "poc_registry_enabled" {
+  description = "Retain the shared stack's immutable PoC registry. Disable only for an explicitly reviewed teardown."
+  type        = bool
+  default     = true
+}
+
+variable "poc_route_enabled" {
+  description = "Publish poc_hostname through the existing tunnel: one ingress rule before the final 404 plus one proxied CNAME. Needs poc_registry_enabled and ingress_mode = \"tunnel\"; any other combination fails the plan. Deploy and verify the origin first."
+  type        = bool
+  default     = false
+}
+
+variable "poc_hostname" {
+  description = "Single label under zone_name for the Connect web-call PoC. Its PUBLIC_ORIGIN is fixed to https://call-sea-hackathon.voidbox.io."
+  type        = string
+  default     = "call-sea-hackathon"
+
+  validation {
+    condition     = can(regex("^[a-z0-9-]+$", var.poc_hostname))
+    error_message = "poc_hostname must be one DNS label (no dots)."
+  }
+}
+
+# The Yai Mali dev app is a second sidecar beside the PoC, with its own registry and route switches.
+
+variable "dev_registry_enabled" {
+  description = "Create the dev app's immutable ECR repository. Disable only for an explicitly reviewed teardown."
+  type        = bool
+  default     = true
+}
+
+variable "dev_route_enabled" {
+  description = "Publish dev_hostname through the existing tunnel: one ingress rule before the final 404 (after the PoC rule, when both are on) plus one proxied CNAME. Needs dev_registry_enabled and ingress_mode = \"tunnel\"; any other combination fails the plan. Deploy and verify the origin first."
+  type        = bool
+  default     = false
+}
+
+variable "dev_hostname" {
+  description = "Single label under zone_name for the Yai Mali dev app. Its PUBLIC_ORIGIN is fixed to https://sea-hackathon-dev.voidbox.io."
+  type        = string
+  default     = "sea-hackathon-dev"
+
+  validation {
+    condition     = can(regex("^[a-z0-9-]+$", var.dev_hostname))
+    error_message = "dev_hostname must be one DNS label (no dots)."
+  }
+}

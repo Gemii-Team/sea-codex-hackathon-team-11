@@ -1,0 +1,29 @@
+{
+  "Version": "2019-10-30",
+  "StartAction": "7c1b2a40-3e5d-4f6a-9b8c-0d1e2f3a4b5c",
+  "Actions": [
+    {
+      "Identifier": "7c1b2a40-3e5d-4f6a-9b8c-0d1e2f3a4b5c",
+      "Type": "MessageParticipant",
+      "Parameters": {
+        "Text": "Team Eleven. Your browser is connected to Amazon Connect."
+      },
+      "Transitions": {
+        "NextAction": "2f9e8d7c-6b5a-4c3d-8e1f-a0b1c2d3e4f5",
+        "Errors": [
+          {
+            "NextAction": "2f9e8d7c-6b5a-4c3d-8e1f-a0b1c2d3e4f5",
+            "ErrorType": "NoMatchingError"
+          }
+        ],
+        "Conditions": []
+      }
+    },
+    {
+      "Identifier": "2f9e8d7c-6b5a-4c3d-8e1f-a0b1c2d3e4f5",
+      "Type": "DisconnectParticipant",
+      "Parameters": {},
+      "Transitions": {}
+    }
+  ]
+}

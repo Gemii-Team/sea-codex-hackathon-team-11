@@ -15,6 +15,10 @@ The Thai-language workspace opens to a searchable list of agents. Create or edit
 
 This portal prototype uses browser storage and scripted text previews. Live Amazon Connect routing, OpenAI audio, and shared workspace storage are pending.
 
+The separate [Team 11 voice demo](connect-web-call/README.md) connects the browser directly to OpenAI Realtime. It requires team sign-in, does not record calls, and does not use the Amazon Connect voice quota.
+
+[Yai Mali](yai-mali-web/README.md) is the public scam-baiting demo at <https://sea-hackathon-dev.voidbox.io>. Visitors chat with or call a Thai grandma persona through OpenAI, and her notebook collects the account numbers, links and LINE IDs the scammer reveals. It has no login; spend is bounded by the limits in its README.
+
 ## Run locally
 
 With Docker and Docker Compose installed, run `make up`. Open the console at <http://localhost:5173> and Prometheus at <http://localhost:9090>. In Prometheus, query `orchestrator_api_up` or open the **Alerts** page. To see the API alert fire, run `docker compose stop api`, allow at least one minute plus a scrape interval, then run `docker compose start api`. Run `make down` to stop the stack.

@@ -1,0 +1,35 @@
+:root {
+  color-scheme: light;
+  --ink: #152b25;
+  --muted: #4d625c;
+  --bg: #f4f7f1;
+  --card: #fff;
+  --line: #d5ded6;
+  --accent: #1d6b4f;
+  --danger: #a3261b;
+  --ok: #17663f;
+  font-family: system-ui, -apple-system, "Segoe UI", "Noto Sans Thai", sans-serif;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink); line-height: 1.5; }
+main { max-width: 36rem; margin: 0 auto; padding: 1.5rem 1rem 3rem; }
+.eyebrow { margin: 0; font-size: .8rem; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+h1 { margin: .25rem 0 .75rem; font-size: clamp(1.6rem, 6vw, 2.2rem); line-height: 1.15; }
+h2 { margin: 0 0 1rem; font-size: 1.1rem; }
+.lede { margin: 0 0 .5rem; }
+.thai { margin: 0 0 1.25rem; color: var(--muted); }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 1rem; padding: 1.25rem; box-shadow: 0 1px 2px rgb(21 43 37 / .06); }
+.actions { display: flex; gap: .75rem; flex-wrap: wrap; }
+button { font: inherit; font-weight: 600; min-height: 3rem; padding: .6rem 1.25rem; border-radius: .75rem; border: 2px solid var(--accent); cursor: pointer; flex: 1 1 8rem; }
+button.primary { background: var(--accent); color: #fff; }
+button.secondary { background: #fff; color: var(--accent); }
+button:disabled { opacity: .5; cursor: not-allowed; }
+button:focus-visible { outline: 3px solid #f2b705; outline-offset: 2px; }
+#speaker { margin-top: .75rem; width: 100%; }
+.status { margin: 1rem 0 0; padding: .6rem .8rem; border-radius: .6rem; background: #eef3ee; font-weight: 600; }
+.status[data-state="connecting"] { background: #fff6d6; }
+.status[data-state="live"] { background: #dcf2e3; color: var(--ok); }
+.status[data-state="error"] { background: #fde4e1; color: var(--danger); }
+.detail { margin: .5rem 0 0; color: var(--danger); }
+.notes { margin: 1.25rem 0 0; padding-left: 1.1rem; color: var(--muted); font-size: .92rem; }
+@media (prefers-reduced-motion: no-preference) { .status[data-state="connecting"]::after { content: " …"; } }

@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex" />
+    <meta name="color-scheme" content="light" />
+    <title>Team 11 · OpenAI Thai voice demo</title>
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23c5edab'/%3E%3Cpath d='M9 14v4M13 11v10M17 8v16M21 11v10M25 14v4' stroke='%23152b25' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E"
+    />
+    <link rel="stylesheet" href="/styles.css" />
+    <script type="module" src="/call.js"></script>
+  </head>
+  <body>
+    <main>
+      <p class="eyebrow">Team 11 · Demo</p>
+      <h1>OpenAI Thai voice demo</h1>
+      <p class="lede">
+        Talk to an AI voice assistant in Thai. Your microphone audio and the
+        assistant's voice go through your browser to OpenAI.
+      </p>
+      <p class="thai" lang="th">
+        กด “Start call” แล้วอนุญาตไมโครโฟน จากนั้นพูดภาษาไทยได้เลย
+        กด “End call” เมื่อต้องการวางสาย
+      </p>
+
+      <section class="card" aria-labelledby="call-title">
+        <h2 id="call-title">Voice call</h2>
+        <div class="actions">
+          <button id="start" type="button" class="primary">Start call</button>
+          <button id="end" type="button" class="secondary" disabled>End call</button>
+        </div>
+        <p id="status" class="status" data-state="idle" role="status" aria-live="polite">
+          Ready. Press Start call to begin.
+        </p>
+        <p id="detail" class="detail" role="alert" hidden></p>
+        <button id="speaker" type="button" class="secondary" hidden>Enable speaker</button>
+        <audio id="remote" autoplay playsinline></audio>
+      </section>
+
+      <ul class="notes">
+        <li>Audio is sent to OpenAI only after you press Start call.</li>
+        <li>One call at a time, up to 3 minutes. The demo has a limited number of calls.</li>
+        <li>Nothing is recorded, transcribed or saved by this page.</li>
+        <li lang="th">ไม่มีการบันทึกเสียงหรือเก็บข้อความบทสนทนา</li>
+      </ul>
+    </main>
+  </body>
+</html>

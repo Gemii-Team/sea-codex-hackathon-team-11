@@ -1,0 +1,49 @@
+# Keep the original Compose project and DNS service names so this cutover does not touch the main app.
+# Both secrets are read as raw values on the host; do not print `docker compose config` on EC2.
+name: sea-connect-web-call
+
+services:
+  connect-web-call:
+    image: ${IMAGE:?IMAGE is set by remote-deploy.sh}
+    env_file:
+      - path: poc.env
+        required: true
+        format: raw
+    environment:
+      NODE_ENV: production
+      PORT: "8080"
+      PUBLIC_ORIGIN: https://call-sea-hackathon.voidbox.io
+      VOICE_CUTOFF_AT: "2026-11-21T16:59:00Z"
+      VOICE_STATE_DIR: /var/lib/team-voice
+    expose:
+      - "8080"
+    networks: [edge]
+    restart: "no"
+    stop_grace_period: 30s
+    volumes:
+      - ./state:/var/lib/team-voice
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 128
+    mem_limit: 256m
+    cpus: 0.5
+    # Dependency-free readiness check: Node itself, against the unauthenticated /healthz.
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:8080/healthz', { signal: AbortSignal.timeout(2000) }).then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))"
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+networks:
+  edge:
+    external: true
+    name: sea-hackathon_default

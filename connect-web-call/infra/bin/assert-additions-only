@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# First deployment: allow only the named greeting flow on the verified team instance.
+# Reads one saved plan's JSON from stdin. Never print the plan or its values.
+set -euo pipefail
+
+command -v jq >/dev/null 2>&1 || {
+  echo "error: jq is required" >&2
+  exit 2
+}
+
+jq -se '
+  length == 1 and (.[0] |
+    [.resource_changes[] | select(.mode == "managed" and .change.actions != ["no-op"])] |
+    length == 1 and (.[0] |
+      .address == "aws_connect_contact_flow.greeting" and .change.actions == ["create"] and
+      (.change.after | .type == "CONTACT_FLOW" and .name == "team-eleven-web-call-greeting" and
+       .instance_id == "de120632-5aca-4f3e-96fa-5d201b7f3708")))
+' >/dev/null || { echo 'Refused: expected only the new greeting flow on sea-team11-phone-demo.' >&2; exit 1; }
+echo 'OK: only the PoC greeting flow will be created on the existing team instance.'

@@ -9,6 +9,12 @@ Run every command below from `infra/hosting/`. Credentials come from `.env` at t
 `CLOUNDFLARE_API_TOKEN` also works; `ENV_FILE=/path/.env` overrides the location). The Cloudflare token
 needs *Account → Cloudflare Tunnel → Edit* and *Zone → DNS → Edit* on `voidbox.io`.
 
+If your shared `.env` also contains **Connect Customer** or other app credentials, run hosting commands through `../../connect-web-call/bin/with-aws hosting`, e.g. `../../connect-web-call/bin/with-aws hosting bin/tf plan`. This checks the hosting account, passes only hosting credentials, and accepts `KEY = value` without evaluating the file as shell. The legacy unwrapped commands expect a trusted shell-compatible hosting-only file.
+
+The `sea-hackathon/connect-web-call` ECR registry is already in this stack's state. Plan from a revision that declares and retains it; reject any unexpected registry deletion. The `call-sea-hackathon.voidbox.io` tunnel route is independently disabled by default.
+
+A second, independent sidecar, the Yai Mali dev app (`../../yai-mali-web/`), has its own switches: `dev_registry_enabled` (default on) creates the immutable `sea-hackathon/yai-mali-dev` ECR repository; `dev_route_enabled` (default off) publishes `sea-hackathon-dev.voidbox.io` as one more tunnel rule (after the PoC rule, before the final 404) plus one proxied CNAME. The route needs the registry and `ingress_mode = "tunnel"` and must not reuse `hostname` or `poc_hostname`; otherwise the plan fails. Review plans with `../../yai-mali-web/deploy/deploy plan-guard registry|route|route-off <plan>`. The instance role already reads `/sea-hackathon/*` SSM parameters and pulls from the account's ECR, so it needs no change.
+
 | Path | What it is |
 |---|---|
 | `*.tf` | OpenTofu: server, IAM role, ECR, budget, tunnel, DNS record. State in S3. |

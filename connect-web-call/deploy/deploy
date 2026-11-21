@@ -1,0 +1,202 @@
+#!/usr/bin/env bash
+# Deploys and checks the Connect web-call PoC beside the main app. This is not
+# infra/hosting/bin/deploy (that one builds and restarts the main app). It touches only the PoC's
+# ECR repository and Compose project. Only non-secret values travel in the SSM command; the host
+# reads the two PoC parameters under /<project>/connect-web-call/ itself. No secret is ever a
+# build argument or in argv. Run it from anywhere; it re-runs itself under the hosting wrapper
+# (connect-web-call/bin/with-aws hosting ...), which provides only hosting AWS and Cloudflare
+# credentials and ENV_FILE=/dev/null.
+set -euo pipefail
+umask 077
+
+die() {
+  echo "error: $*" >&2
+  exit 1
+}
+
+usage() {
+  cat << 'EOF'
+Usage: connect-web-call/deploy/deploy <command>
+
+  up [--tag TAG | --image REF]  Build linux/arm64, push to the PoC ECR repository, start the PoC on
+                                the host through SSM and verify both origins on the Docker bridge
+                                (app:8080 answers; connect-web-call:8080 challenges and
+                                authenticates) with the password read on the host. Prints
+                                previous_image=; roll back with: up --image <previous_image>.
+                                REF is <repo>@sha256:<digest> or <repo>:<tag> of the PoC repository.
+  check                         The same authenticated origin check, read-only, any time. Run it
+                                right before planning the route: it is the proof that the origin
+                                is live before DNS.
+  plan-guard registry|route|route-off PLANFILE
+                                Read-only: inspect a saved plan with tofu show. It must contain
+                                exactly these changes and nothing else:
+                                  registry   create PoC ECR repository + lifecycle policy
+                                  route      update tunnel config (+1 rule) + create PoC CNAME
+                                  route-off  update tunnel config (-1 rule) + delete PoC CNAME
+                                It reads no output and calls no cloud API.
+EOF
+}
+
+case "${1:-help}" in help | -h | --help) usage; exit 0 ;; esac
+
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+self="$here/$(basename "${BASH_SOURCE[0]}")"
+ctx="$(dirname "$here")"
+hosting="$(dirname "$ctx")/infra/hosting"
+wrapper="$ctx/bin/with-aws"
+
+# Local plan review needs only the saved plan and the installed provider schemas.
+if [ "${1:-}" = --via-wrapper ]; then
+  shift
+  [ "${ENV_FILE:-}" = /dev/null ] || die "expected the checked hosting environment"
+elif [ "${1:-}" != plan-guard ] && [ "${ENV_FILE:-}" != /dev/null ]; then
+  exec "$wrapper" hosting "$self" --via-wrapper "$@"
+fi
+unset CLOUDFLARE_API_TOKEN CLOUNDFLARE_API_TOKEN  # image deploy and local plan review don't edit DNS
+
+readonly POC_FQDN=call-sea-hackathon.voidbox.io
+tmp="$(mktemp -d)"
+trap 'rm -rf "$tmp"' EXIT
+
+# Reads the hosting outputs and proves the AWS identity is the hosting account, before any write.
+load() {
+  tofu -chdir="$hosting" output -json > "$tmp/out.json" ||
+    die "tofu output failed: is infra/hosting initialised under the hosting credentials?"
+  o() { jq -r --arg k "$1" '.[$k].value // ""' "$tmp/out.json"; }
+  project="$(o project)" region="$(o region)" instance="$(o instance_id)" repo="$(o poc_repository_url)"
+  [ -n "$repo" ] || die "poc_repository_url is empty: apply the reviewed registry plan first"
+  [ "$(o poc_fqdn)" = "$POC_FQDN" ] || die "poc_fqdn is not $POC_FQDN, the PoC's fixed origin"
+  [[ "$project$region" =~ ^[a-z0-9-]+$ ]] || die "malformed project or region output"
+  [[ "$repo" =~ ^([0-9]{12})\.dkr\.ecr\.${region}\.amazonaws\.com/${project}/connect-web-call$ ]] ||
+    die "poc_repository_url is not $project/connect-web-call in $region"
+  account="${BASH_REMATCH[1]}"
+  [ "$account" = 157264476192 ] && [ "$(o ecr_repository_url | cut -d. -f1)" = "$account" ] || die "repository outputs are not in the hosting account"
+
+  [ -n "${AWS_PROFILE:-}" ] || { [ -n "${AWS_ACCESS_KEY_ID:-}" ] && [ -n "${AWS_SECRET_ACCESS_KEY:-}" ]; } ||
+    die "no explicit AWS credentials: use connect-web-call/bin/with-aws hosting"
+  export AWS_EC2_METADATA_DISABLED=true AWS_PAGER=""
+  [ "$(aws sts get-caller-identity --region "$region" --query Account --output text)" = "$account" ] ||
+    die "these credentials are not in hosting account $account (Connect credentials?); nothing was changed"
+}
+
+# ssm_run <remote-deploy.sh args>: ships remote-deploy.sh, probe.mjs and compose.yml, runs the
+# script as root on the instance and relays its output. The payload names the image only.
+ssm_run() {
+  local args="" a script id status
+  for a in "$@"; do
+    [[ "$a" =~ ^[A-Za-z0-9@:/._-]+$ ]] || die "unsafe remote argument"
+    args="$args '$a'"
+  done
+  [ "$(aws ssm describe-instance-information --region "$region" --filters "Key=InstanceIds,Values=$instance" \
+    --query 'InstanceInformationList[0].PingStatus' --output text)" = Online ] ||
+    die "SSM agent on $instance is not online"
+  b64() { base64 < "$here/$1" | tr -d '\n'; }
+  IFS= read -r -d '' script << EOF || true
+set -euo pipefail
+w=\$(mktemp -d)
+trap 'rm -rf "\$w"' EXIT
+echo '$(b64 remote-deploy.sh)' | base64 -d > "\$w/remote-deploy.sh"
+echo '$(b64 probe.mjs)' | base64 -d > "\$w/probe.mjs"
+echo '$(b64 compose.yml)' | base64 -d > "\$w/compose.yml"
+echo '$(b64 voice-expiry.conf)' | base64 -d > "\$w/voice-expiry.conf"
+bash "\$w/remote-deploy.sh"$args
+EOF
+  jq -n --arg c "$script" '{commands: [$c], executionTimeout: ["900"]}' > "$tmp/params.json"
+  id="$(aws ssm send-command --region "$region" --instance-ids "$instance" --document-name AWS-RunShellScript \
+    --comment "connect-web-call $1" --parameters "file://$tmp/params.json" --query Command.CommandId --output text)"
+  status=Pending
+  for _ in $(seq 1 200); do
+    sleep 5
+    status="$(aws ssm get-command-invocation --region "$region" --command-id "$id" --instance-id "$instance" \
+      --query Status --output text 2> /dev/null || echo Pending)"
+    case "$status" in Pending | InProgress | Delayed) ;; *) break ;; esac
+  done
+  aws ssm get-command-invocation --region "$region" --command-id "$id" --instance-id "$instance" \
+    --query StandardOutputContent --output text
+  aws ssm get-command-invocation --region "$region" --command-id "$id" --instance-id "$instance" \
+    --query StandardErrorContent --output text >&2
+  [ "$status" = Success ] || die "remote command $id finished with status $status"
+}
+
+cmd_up() {
+  local tag="" ref="" digest id
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --tag) tag="${2:?--tag needs a value}"; shift 2 ;;
+      --image) ref="${2:?--image needs a value}"; shift 2 ;;
+      *) die "unknown option: $1" ;;
+    esac
+  done
+  [ -z "$ref" ] || [ -z "$tag" ] || die "--image and --tag are mutually exclusive"
+  load
+  if [ -z "$ref" ]; then
+    tag="${tag:-$(date -u +%Y%m%d%H%M%S)-$(git -C "$ctx" rev-parse --short HEAD)}"
+    [[ "$tag" =~ ^[A-Za-z0-9_.-]{1,128}$ ]] || die "invalid image tag"
+    aws ecr get-login-password --region "$region" | docker login --username AWS --password-stdin "${repo%%/*}" > /dev/null
+    docker buildx build --platform linux/arm64 --provenance=false --tag "$repo:$tag" --push "$ctx"
+    ref="$repo:$tag"
+  fi
+  case "$ref" in "$repo:"* | "$repo@sha256:"*) ;; *) die "--image must be $repo:<tag> or $repo@sha256:<digest>" ;; esac
+  case "$ref" in *@sha256:*) id="imageDigest=${ref##*@}" ;; *) id="imageTag=${ref##*:}" ;; esac
+  digest="$(aws ecr describe-images --region "$region" --repository-name "$project/connect-web-call" \
+    --image-ids "$id" --query 'imageDetails[0].imageDigest' --output text)" || die "$ref is not in the PoC repository"
+  ssm_run up "$repo@$digest" "$project" "$region"
+  echo "Both origins checked; this command did not change DNS or place a call."
+}
+
+cmd_plan_guard() {
+  local kind="${1:-}" plan="${2:-}" want have on=true
+  [ -f "$plan" ] || die "usage: plan-guard registry|route|route-off PLANFILE"
+  case "$kind" in
+    registry) want='aws_ecr_lifecycle_policy.poc[0] create
+aws_ecr_repository.poc[0] create' ;;
+    route) want='cloudflare_dns_record.poc[0] create
+cloudflare_zero_trust_tunnel_cloudflared_config.app[0] update' ;;
+    route-off) on=false want='cloudflare_dns_record.poc[0] delete
+cloudflare_zero_trust_tunnel_cloudflared_config.app[0] update' ;;
+    *) die "plan-guard kind must be registry, route or route-off" ;;
+  esac
+  tofu -chdir="$hosting" show -json "$(cd "$(dirname "$plan")" && pwd)/$(basename "$plan")" > "$tmp/plan.json" ||
+    die "tofu show failed: is infra/hosting initialised?"
+
+  have="$(jq -r '[.resource_changes[]? | select(.change.actions != ["no-op"] and .change.actions != ["read"])
+    | "\(.address) \(.change.actions | join(","))"] | sort | .[]' "$tmp/plan.json")"
+  [ "$have" = "$want" ] || die "the $kind plan must contain exactly:
+$want
+but contains:
+${have:-(no changes)}"
+
+  case "$kind" in
+    registry)
+      jq -e '.resource_changes[] | select(.address == "aws_ecr_repository.poc[0]") | .change.after
+        | .image_tag_mutability == "IMMUTABLE" and (.name | endswith("/connect-web-call"))' \
+        "$tmp/plan.json" > /dev/null || die "the PoC repository is not IMMUTABLE connect-web-call" ;;
+    *)
+      # One PoC rule, directly before the final 404; every original rule keeps its place.
+      jq -e --arg host "$POC_FQDN" --arg svc "http://connect-web-call:8080" --argjson on "$on" '
+        .resource_changes[] | select(.address == "cloudflare_zero_trust_tunnel_cloudflared_config.app[0]") | .change
+        | .before.config.ingress as $b
+        | .after.config.ingress as $a
+        | (if $on then $b else $a end) as $s | (if $on then $a else $b end) as $l
+        | ($s | length) >= 2 and $s[-1].service == "http_status:404"
+          and ($l[-2] | {hostname, service}) == {hostname: $host, service: $svc}
+          and ($l[:-2] + [$l[-1]]) == $s' "$tmp/plan.json" > /dev/null ||
+        die "the tunnel change is not exactly one $POC_FQDN rule before the final 404"
+      if [ "$on" = true ]; then
+        jq -e --arg fqdn "$POC_FQDN" '
+          (.planned_values.root_module.resources[] | select(.address == "cloudflare_dns_record.app") | .values.content) as $t
+          | .resource_changes[] | select(.address == "cloudflare_dns_record.poc[0]") | .change.after
+          | .type == "CNAME" and .proxied == true and .name == $fqdn and .content == $t' "$tmp/plan.json" > /dev/null ||
+          die "the PoC record is not a proxied CNAME to the main hostname's tunnel"
+      fi ;;
+  esac
+  echo "plan-guard OK ($kind, read-only). Remove the plan file after applying it."
+  [ "$kind" != route ] || echo "Before applying: deploy check must have passed (origin live before DNS)."
+}
+
+case "${1:-}" in
+  up) shift; cmd_up "$@" ;;
+  check) load; ssm_run check "$project" "$region" ;;
+  plan-guard) shift; cmd_plan_guard "$@" ;;
+  *) usage >&2; die "unknown command: ${1:-}" ;;
+esac

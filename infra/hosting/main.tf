@@ -2,6 +2,22 @@ locals {
   tunnel = var.ingress_mode == "tunnel"
   public = var.ingress_mode == "public"
   fqdn   = "${var.hostname}.${var.zone_name}"
+
+  # Connect web-call PoC beside the app. The service name and port must match
+  # connect-web-call/deploy/compose.yml; the PoC's PUBLIC_ORIGIN is fixed to its hostname.
+  poc_service = "connect-web-call"
+  poc_port    = 8080
+  poc_fqdn    = "${var.poc_hostname}.${var.zone_name}"
+  poc_origin  = "http://${local.poc_service}:${local.poc_port}"
+  poc_hosts   = var.poc_route_enabled ? [local.poc_fqdn] : []
+
+  # Yai Mali dev app: a second, independent sidecar beside the app and the PoC. The service name and
+  # port must match yai-mali-web/deploy/compose.yml; its PUBLIC_ORIGIN is fixed to its hostname.
+  dev_service = "yai-mali-dev"
+  dev_port    = 8080
+  dev_fqdn    = "${var.dev_hostname}.${var.zone_name}"
+  dev_origin  = "http://${local.dev_service}:${local.dev_port}"
+  dev_hosts   = var.dev_route_enabled ? [local.dev_fqdn] : []
 }
 
 data "aws_caller_identity" "current" {}
@@ -179,6 +195,71 @@ resource "aws_ecr_lifecycle_policy" "app" {
   })
 }
 
+# The PoC's own immutable repository, independent of the app repository and of the route switch.
+# Not force_delete: a plan that drops it while it still holds images fails instead of deleting them.
+resource "aws_ecr_repository" "poc" {
+  count = var.poc_registry_enabled ? 1 : 0
+
+  name                 = "${var.project}/${local.poc_service}"
+  image_tag_mutability = "IMMUTABLE"
+  force_delete         = false
+
+  encryption_configuration {
+    encryption_type = "AES256"
+  }
+
+  image_scanning_configuration {
+    scan_on_push = true
+  }
+}
+
+resource "aws_ecr_lifecycle_policy" "poc" {
+  count = var.poc_registry_enabled ? 1 : 0
+
+  repository = aws_ecr_repository.poc[0].name
+  policy = jsonencode({
+    rules = [{
+      rulePriority = 1
+      description  = "keep the last 10 images"
+      selection    = { tagStatus = "any", countType = "imageCountMoreThan", countNumber = 10 }
+      action       = { type = "expire" }
+    }]
+  })
+}
+
+# The Yai Mali dev app's own immutable repository, independent of the app and PoC repositories and
+# of the route switch. Not force_delete: a plan that drops it while it still holds images fails
+# instead of deleting them.
+resource "aws_ecr_repository" "dev" {
+  count = var.dev_registry_enabled ? 1 : 0
+
+  name                 = "${var.project}/${local.dev_service}"
+  image_tag_mutability = "IMMUTABLE"
+  force_delete         = false
+
+  encryption_configuration {
+    encryption_type = "AES256"
+  }
+
+  image_scanning_configuration {
+    scan_on_push = true
+  }
+}
+
+resource "aws_ecr_lifecycle_policy" "dev" {
+  count = var.dev_registry_enabled ? 1 : 0
+
+  repository = aws_ecr_repository.dev[0].name
+  policy = jsonencode({
+    rules = [{
+      rulePriority = 1
+      description  = "keep the last 10 images"
+      selection    = { tagStatus = "any", countType = "imageCountMoreThan", countNumber = 10 }
+      action       = { type = "expire" }
+    }]
+  })
+}
+
 # --- Budget ------------------------------------------------------------------
 
 resource "aws_budgets_budget" "monthly" {
@@ -238,11 +319,16 @@ resource "cloudflare_zero_trust_tunnel_cloudflared_config" "app" {
 
   account_id = data.cloudflare_zone.this.account.id
   tunnel_id  = cloudflare_zero_trust_tunnel_cloudflared.app[0].id
+
+  # The PoC rule and then the dev rule, when enabled, go immediately before the final catch-all 404;
+  # the original hostname rule and the catch-all are never reordered or replaced.
   config = {
-    ingress = [
-      { hostname = local.fqdn, service = "http://app:${var.app_port}" },
-      { service = "http_status:404" },
-    ]
+    ingress = concat(
+      [{ hostname = local.fqdn, service = "http://app:${var.app_port}" }],
+      [for host in local.poc_hosts : { hostname = host, service = local.poc_origin }],
+      [for host in local.dev_hosts : { hostname = host, service = local.dev_origin }],
+      [{ service = "http_status:404" }],
+    )
   }
 }
 
@@ -255,4 +341,73 @@ resource "cloudflare_dns_record" "app" {
   proxied = local.tunnel
   ttl     = local.tunnel ? 1 : 300
   comment = "${var.project} (opentofu, ingress_mode=${var.ingress_mode})"
+}
+
+# The PoC hostname rides the existing tunnel: one more proxied CNAME to it. It is created only
+# after the ingress rule exists (depends_on), and only with the registry enabled and the tunnel as
+# the ingress, so a route can never point at a PoC that has nowhere to run.
+resource "cloudflare_dns_record" "poc" {
+  count = var.poc_route_enabled ? 1 : 0
+
+  zone_id = data.cloudflare_zone.this.id
+  name    = local.poc_fqdn
+  type    = "CNAME"
+  content = "${try(cloudflare_zero_trust_tunnel_cloudflared.app[0].id, "no-tunnel")}.cfargotunnel.com"
+  proxied = true
+  ttl     = 1
+  comment = "${var.project} ${local.poc_service} (opentofu)"
+
+  depends_on = [cloudflare_zero_trust_tunnel_cloudflared_config.app]
+
+  lifecycle {
+    precondition {
+      condition     = var.poc_registry_enabled
+      error_message = "poc_route_enabled requires poc_registry_enabled = true: create the PoC repository, then push and verify the origin before publishing the hostname."
+    }
+    precondition {
+      condition     = local.tunnel
+      error_message = "poc_route_enabled requires ingress_mode = \"tunnel\": the PoC hostname is only published through the Cloudflare Tunnel."
+    }
+    precondition {
+      condition     = local.poc_fqdn != local.fqdn
+      error_message = "poc_hostname must differ from hostname: the PoC must not take over the main site's name."
+    }
+  }
+}
+
+# The dev hostname rides the same tunnel: one more proxied CNAME to it, created only after the
+# ingress rule exists (depends_on), and only with the dev registry enabled and the tunnel as the
+# ingress, so a route can never point at a dev app that has nowhere to run. The preconditions are
+# evaluated whenever the route is on, including in public mode where no tunnel exists.
+resource "cloudflare_dns_record" "dev" {
+  count = var.dev_route_enabled ? 1 : 0
+
+  zone_id = data.cloudflare_zone.this.id
+  name    = local.dev_fqdn
+  type    = "CNAME"
+  content = "${try(cloudflare_zero_trust_tunnel_cloudflared.app[0].id, "no-tunnel")}.cfargotunnel.com"
+  proxied = true
+  ttl     = 1
+  comment = "${var.project} ${local.dev_service} (opentofu)"
+
+  depends_on = [cloudflare_zero_trust_tunnel_cloudflared_config.app]
+
+  lifecycle {
+    precondition {
+      condition     = var.dev_registry_enabled
+      error_message = "dev_route_enabled requires dev_registry_enabled = true: create the dev repository, then push and verify the origin before publishing the hostname."
+    }
+    precondition {
+      condition     = local.tunnel
+      error_message = "dev_route_enabled requires ingress_mode = \"tunnel\": the dev hostname is only published through the Cloudflare Tunnel."
+    }
+    precondition {
+      condition     = local.dev_fqdn != local.fqdn
+      error_message = "dev_hostname must differ from hostname: the dev app must not take over the main site's name."
+    }
+    precondition {
+      condition     = local.dev_fqdn != local.poc_fqdn
+      error_message = "dev_hostname must differ from poc_hostname: the dev app must not take over the PoC's name."
+    }
+  }
 }
