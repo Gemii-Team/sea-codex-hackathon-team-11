@@ -77,7 +77,7 @@ func registerVoice(routes *http.ServeMux) {
 			"type": "realtime", "model": "gpt-realtime-2.1-mini",
 			"instructions": instructions, "max_output_tokens": 400,
 			"audio": map[string]any{
-				"input":  map[string]any{"transcription": map[string]string{"model": "gpt-4o-mini-transcribe", "language": "th"}},
+				"input":  map[string]any{"transcription": map[string]string{"model": "gpt-transcribe", "language": "th"}},
 				"output": map[string]string{"voice": input.Voice},
 			},
 		})
