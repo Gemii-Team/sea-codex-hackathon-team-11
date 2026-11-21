@@ -1,19 +1,20 @@
-# OpenAI Codex Security: a full-repository vulnerability scan, report-only.
+# OpenAI Codex Security: a full-repository vulnerability scan, report-only, run on demand.
 # Based on https://github.com/openai/codex-security/blob/main/github-action/examples/repository.yml
+# The team's regular scans run in Daybreak Defense Factory (the Codex Security GitHub App).
+# This workflow needs CODEX_SECURITY_API_KEY from an API project with Daybreak (Trusted Access for
+# Cyber) enabled: with a standard key, OpenAI's safeguards refuse the scan within seconds, at no cost
+# (runs 44889876064 and 44890103008). Add a schedule back only after a manual run completes.
+#
 # Findings go to Security → Code scanning. Full reports are not uploaded as artifacts, because
 # this repository is public and the reports contain source code and vulnerability details.
 # The job summary lists the top findings and is visible to anyone who can read this repository.
-#
 # Cost: an estimated $5 limit per scan (gpt-5.6-sol); requests in progress can exceed it.
-# Key: repository secret CODEX_SECURITY_API_KEY (an OpenAI API key).
 # Updating the Action: review the new action-vX.Y.Z release, copy its distribution commit SHA,
-# then run this workflow manually before relying on the schedule.
+# then run this workflow manually.
 name: Codex Security repository
 
 on:
   workflow_dispatch:
-  schedule:
-    - cron: "23 7 * * 1" # Mondays at 07:23 UTC (14:23 Bangkok)
 
 permissions:
   contents: read

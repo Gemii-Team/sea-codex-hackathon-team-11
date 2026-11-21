@@ -1,8 +1,23 @@
+<p align="center">
+  <img src="yai-mali-web/frontend/assets/mascot.png" width="220" alt="Yai Mali, a 72-year-old grandmother with round glasses and a jasmine flower in her hair, holding a pencil and a small notebook">
+</p>
+
 # Yai Mali (ยายมะลิ): an AI grandma who keeps scammers talking
 
 **Live submission: <https://sea-hackathon-dev.voidbox.io/>.** No login and no password. Open it in a desktop or mobile browser.
 
 Team 11 · Sea × OpenAI Codex Hackathon Thailand · 21 November 2026.
+
+| 30-second video | 6-minute pitch deck |
+|:---:|:---:|
+| <a href="submission/yai_mali_30s.mp4"><img src="submission/video-poster.png" width="220" alt="Play the 30-second Yai Mali video"></a> | <a href="submission/Yai-Mali-6-Minute-Pitch-Final.pdf"><img src="submission/pitch-cover.png" width="460" alt="Yai Mali pitch deck title slide"></a> |
+| [▶ Watch `yai_mali_30s.mp4`](submission/yai_mali_30s.mp4) (30 s, Thai with English subtitles) | [Open `Yai-Mali-6-Minute-Pitch-Final.pdf`](submission/Yai-Mali-6-Minute-Pitch-Final.pdf) (9 slides) |
+
+<details><summary>All nine slides at a glance</summary>
+
+![The nine slides of the Yai Mali pitch deck](submission/pitch-slides.png)
+
+</details>
 
 Phone and chat scams cost Thai families, especially older people, their savings every day. Yai Mali turns the tables. She is a warm, slightly slow 72-year-old retired teacher from Suphanburi who answers the scammer, plays along and keeps them talking. Along the way she gets them to reveal, one detail at a time, what a scam depends on: the bank account they want money sent to, the holder name, PromptPay, phone numbers, LINE IDs and links. Each detail lands in her notebook, linked to the message it came from, ready for a person to review and export.
 
@@ -122,7 +137,7 @@ The app is public, so the server alone protects the OpenAI key. None of these li
 - **Infrastructure as code:** OpenTofu in [`infra/hosting/`](infra/hosting/README.md), with state in a versioned, encrypted S3 bucket. The Yai Mali registry, tunnel route and DNS record are opt-in variables (`dev_registry_enabled`, `dev_route_enabled`).
 - **Yai Mali deploys** with [`yai-mali-web/deploy/deploy up`](yai-mali-web/README.md#deploy). It builds `linux/arm64`, pushes, starts the container by digest, and probes both this app and the main app on the private Docker network, refusing to finish if the main app changed. It prints the previous image for rollback. CI does not deploy it.
 - **CI** ([`.github/workflows/verify.yml`](.github/workflows/verify.yml)): every pull request runs `make check` (Go tests, the frontend build and Compose validation) and the OpenTofu format, validate and mocked tests. Merges to `main` deploy the main app.
-- **Security scanning** ([`.github/workflows/codex-security.yml`](.github/workflows/codex-security.yml)): [OpenAI Codex Security](https://github.com/openai/codex-security) scans the whole repository with `gpt-5.6-sol`, weekly and on demand, with an estimated $5 limit per scan. Findings appear under **Security → Code scanning**. The Action is pinned to a reviewed release commit, and its API key lives only in a repository secret.
+- **Security scanning:** [OpenAI Codex Security](https://github.com/openai/codex-security) scans the repository through **Daybreak Defense Factory**, the Codex Security GitHub App connected to this repository. Daybreak runs in Codex cloud with reduced refusals for authorized security work. The repository also has a [GitHub Actions workflow](.github/workflows/codex-security.yml) for the same scanner, pinned to a reviewed release, which sends findings to **Security → Code scanning**. It runs only on demand, because OpenAI's standard safeguards refuse the scan with the team's regular API key; it needs a key from a Daybreak-approved API project.
 
 ## Run and test locally
 
