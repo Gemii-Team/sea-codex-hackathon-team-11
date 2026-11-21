@@ -43,6 +43,17 @@ export async function startRealtime({ key, model, sdp, onEvent, onClose }) {
     method: 'POST', headers, signal: AbortSignal.timeout(6000),
   }).then((result) => result.ok || result.status === 404);
 
+  try {
+    const close = await observeRealtime({ key, id, onEvent, onClose });
+    return { answer, hangUp, close };
+  } catch (error) {
+    await hangUp().catch(() => {});
+    throw error;
+  }
+}
+
+export async function observeRealtime({ key, id, onEvent, onClose }) {
+  const headers = { Authorization: 'Bearer ' + key };
   const socket = new WebSocket(`wss://api.openai.com/v1/realtime?call_id=${id}`, { headers });
   socket.addEventListener('message', ({ data }) => {
     if (typeof data === 'string') onEvent(JSON.parse(data));
@@ -58,10 +69,9 @@ export async function startRealtime({ key, model, sdp, onEvent, onClose }) {
     });
   } catch (error) {
     socket.close();
-    await hangUp().catch(() => {});
     throw error;
   }
   socket.addEventListener('close', onClose, { once: true });
 
-  return { answer, hangUp, close: () => socket.close() };
+  return () => socket.close();
 }

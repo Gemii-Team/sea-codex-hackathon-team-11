@@ -40,6 +40,7 @@ if [ "$stack" = --stack ]; then
     docker buildx build --platform linux/arm64 --provenance=false \
       --build-arg "SERVICE=$service" -t "$image-$service" --push "$repo_root"
   done
+  docker buildx build --platform linux/arm64 --provenance=false -t "$image-phone" --push "$repo_root/Infra-Phone"
   api_image="$image-api"
   monitor_image="$image-monitor"
 fi

@@ -2,6 +2,12 @@
 
 OpenAI Realtime handles live audio over WebRTC. The local app creates a contact ID, receives both speakers' transcripts through a server-side connection, and saves the call history for the browser to reopen.
 
+## Agent Studio production integration
+
+Agent Studio starts its existing OpenAI call in the Compute account. An internal phone-history service attaches a server-side connection to that same call and records masked caller and agent turns. The call ID also identifies the existing audio recording. The team code opens the Thai call-history page. Reading full evidence also requires the review key in the phone-history volume at `/data/evidence-key`. Audio stays in the existing recording volume.
+
+The default history store uses the persistent phone-history volume. To use the Connect account's private conversation bucket, configure `PHONE_HISTORY_BUCKET` and `PHONE_HISTORY_REGION` under the hosting app's SSM parameter prefix and grant the workload identity access to the bucket's conversation and evidence prefixes. The service uses the AWS credential chain. Local history is not automatically copied on a storage switch. An OpenAI web call is labeled `openai_realtime`. Connect routing is configured separately.
+
 ## Run the demo
 
 1. Use Node.js 26. At the repository root, copy [`.env.sample`](../.env.sample) if you do not have an `.env` file, then set `OPENAI_API_KEY` in `.env`.

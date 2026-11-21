@@ -7,7 +7,7 @@ export const contactIdPattern = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 function runAws(args, input, profile, region) {
   return new Promise((resolve, reject) => {
     const child = spawn('aws', [
-      ...args, '--profile', profile, '--region', region, '--no-cli-pager',
+      ...args, ...(profile ? ['--profile', profile] : []), '--region', region, '--no-cli-pager',
     ], { stdio: ['pipe', 'pipe', 'pipe'], timeout: 25_000 });
     let stdout = '';
     let stderr = '';

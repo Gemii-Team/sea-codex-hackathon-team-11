@@ -28,6 +28,7 @@
   let summary = $state('');
   let showCode = $state(false);
   let consent = $state(false);
+  let historyStatus = $state('');
   let recordingStatus = $state('');
   let savedRecording = $state.raw(null);
   let saving = $state(false);
@@ -43,6 +44,11 @@
     clearTimeout(current.summaryTimer);
     current.abort.abort();
     current.peer.close();
+    if (current.historyURL) {
+      fetch(current.historyURL, { method: 'POST', headers: current.recording.headers, keepalive: true })
+        .then((response) => { historyStatus = response.ok ? 'บันทึกในประวัติสายฝึกแล้ว' : 'บันทึกประวัติสายฝึกไม่สำเร็จ'; })
+        .catch(() => { historyStatus = 'ยังยืนยันการบันทึกประวัติสายฝึกไม่ได้'; });
+    }
     if (current.recorder?.state === 'recording') {
       saving = true;
       current.recorder.stop();
@@ -109,6 +115,7 @@
     }
     notice = '';
     summary = '';
+    historyStatus = '';
     recordingStatus = '';
     savedRecording = null;
     status = 'starting';
@@ -158,7 +165,7 @@
         if (call !== current) return;
         current.recorder.start();
         status = 'live';
-        send(channel, { type: 'response.create', response: { instructions: 'พูดภาษาไทย แนะนำว่าคุณเป็นผู้ช่วย AI และกล่าวคำทักทายนี้ แล้วรอให้ผู้โทรพูด: ' + profile.Greeting } });
+        send(channel, { type: 'response.create', response: { instructions: 'คุณเล่นบทผู้รับสายในสถานการณ์จำลอง กล่าวเฉพาะคำทักทายต่อไปนี้เป็นภาษาไทย แล้วหยุดรอผู้โทร: ' + profile.Greeting } });
       };
       channel.onmessage = ({ data }) => {
         if (call !== current) return;
@@ -215,6 +222,11 @@
           'X-Voice-Recording-Token': response.headers.get('X-Voice-Recording-Token')
         }
       };
+      if (response.headers.get('X-Phone-History') === 'true') {
+        current.historyURL = '/api/v1/phone/finish/' + encodeURIComponent(response.headers.get('X-Voice-Call-ID'));
+      } else {
+        historyStatus = 'สายนี้ยังไม่ได้เชื่อมบริการประวัติสายฝึก';
+      }
       await peer.setRemoteDescription({ type: 'answer', sdp: await response.text() });
     } catch (error) {
       if (current && call !== current) return;
@@ -275,7 +287,8 @@
     {/each}
   </div>
   {#if sampleStatus}<p class="muted" role="status">{sampleStatus}</p>{/if}
-  <h3>คุยสดกับ OpenAI</h3>
+  <h3>ซ้อมรับสายหลอกลวง</h3>
+  <p class="muted">คุณเล่นเป็นผู้โทร ลองอ้างว่ามีค่าจัดส่งค้างอยู่ แล้วฟังว่า Agent ถามอะไรกลับมา</p>
   <label>รหัสเข้าทดสอบ<input type={showCode ? 'text' : 'password'} autocomplete="off" spellcheck="false" bind:value={code} disabled={status !== 'idle'} /></label>
   <label class="recording-consent"><input type="checkbox" bind:checked={showCode} /> แสดงรหัส</label>
   <label class="recording-consent"><input type="checkbox" bind:checked={consent} disabled={status !== 'idle'} /> ทุกคนในสายทดสอบยินยอมให้บันทึกเสียง</label>
@@ -291,6 +304,7 @@
   </div>
   <audio bind:this={audio} autoplay></audio>
   <p class="muted" role="status">{({ starting: 'กำลังเชื่อมต่อ', live: 'กำลังคุย · จำกัด 3 นาที', summarizing: 'กำลังสรุปบทสนทนา' })[status] ?? notice}</p>
+  {#if historyStatus}<p class="muted" role="status">{historyStatus}</p>{/if}
   {#if recordingStatus}<p class="muted" role="status">{recordingStatus}</p>{/if}
   {#if savedRecording}
     <button type="button" class="button secondary" onclick={downloadRecording}>ดาวน์โหลดไฟล์เสียง</button>

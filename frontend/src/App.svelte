@@ -1,4 +1,5 @@
 <script>
+  import PhoneHistory from './PhoneHistory.svelte';
   import Health from './Health.svelte';
   import VoiceDemo from './VoiceDemo.svelte';
   import './portal.css';
@@ -7,7 +8,7 @@
   const scenarios = {
     message: { label: 'ฝากข้อความ', caller: 'ขอฝากข้อความให้ติดต่อกลับได้ไหมครับ', reply: 'ได้เลยค่ะ ขอทราบชื่อของคุณก่อนนะคะ' },
     support: { label: 'สอบถามบริการ', caller: 'ขอสอบถามเรื่องบริการหน่อยครับ', reply: 'ยินดีค่ะ คุณสนใจสอบถามเรื่องอะไรคะ' },
-    mule: { label: 'AI Mule · สอบถามรายการ', caller: 'คุณมีค่าจัดส่งค้างอยู่ครับ' }
+    mule: { label: 'สายอ้างค่าจัดส่ง', caller: 'คุณมีค่าจัดส่งค้างอยู่ครับ' }
   };
   const muleFollowUps = {
     'เป็นกันเอง': 'ขอรายละเอียดไว้ตรวจสอบหน่อยนะคะ',
@@ -20,11 +21,11 @@
     { label: 'เลขอ้างอิง', value: 'DEMO-042', quote: 'เลขอ้างอิง DEMO-042 ครับ' }
   ];
   const emptyAgent = {
-    id: '', name: 'ผู้ช่วยรับสาย', business: 'Wirachit', tone: 'เป็นกันเอง',
-    greeting: 'สวัสดีค่ะ นี่คือผู้ช่วย AI ของ Wirachit ค่ะ มีอะไรให้ช่วยไหมคะ',
-    instructions: 'ถามชื่อและเรื่องที่ติดต่อ จากนั้นทวนเบอร์โทรกลับทีละหลัก',
+    id: '', name: 'ยายมะลิ', business: 'Wirachit', tone: 'เป็นกันเอง',
+    greeting: 'สวัสดีจ้ะ ยายมะลิรับสายจ้ะ หนูโทรมาเรื่องอะไรเหรอ',
+    instructions: 'ฟังเหตุผลที่ผู้โทรอ้าง ถามทีละข้อเพื่อจดรายละเอียดไว้ตรวจสอบ ห้ามให้รหัสหรือทำธุรกรรม',
     region: 'ap-southeast-1', instance: '', flow: '', number: '',
-    persona: 'ผู้ช่วยรับสายที่ถามทีละข้อเพื่อบันทึกข้อมูลสำหรับตรวจสอบ',
+    persona: 'ยายมะลิ อดีตครูที่พูดช้าและสุภาพ เมื่อมีคนโทรมาอ้างว่าต้องจ่ายเงิน ยายอยากรู้ว่าเป็นค่าอะไรและตรวจสอบได้อย่างไร',
     objective: 'เก็บชื่อบริษัทที่ผู้โทรอ้าง ยอดที่แจ้ง และเลขอ้างอิง',
     openingQuestion: 'ติดต่อจากบริษัทไหนคะ',
     voiceURI: '', openAIVoice: 'marin', voiceRate: 1, voicePitch: 1
@@ -65,7 +66,7 @@
   let agents = $state(loadAgents());
   let agent = $state({ ...emptyAgent });
   let page = $state('monitor');
-  let scenario = $state('message');
+  let scenario = $state('mule');
   let tried = $state(false);
   let feedback = $state('');
   let search = $state('');
@@ -94,7 +95,7 @@
 
   function edit(saved = emptyAgent) {
     agent = { ...emptyAgent, ...saved };
-    scenario = 'message';
+    scenario = 'mule';
     tried = false;
     feedback = '';
     page = 'editor';
@@ -136,17 +137,20 @@
     <nav aria-label="เมนูหลัก">
       <button class={{ active: page === 'monitor' }} aria-current={page === 'monitor' ? 'page' : undefined} onclick={() => page = 'monitor'}><span class="nav-icon" aria-hidden="true">◈</span>ติดตาม Agents</button>
       <button class={{ active: page === 'editor' }} aria-current={page === 'editor' ? 'page' : undefined} onclick={() => edit()}><span class="nav-icon" aria-hidden="true">＋</span>สร้าง Agent</button>
+      <button class={{ active: page === 'history' }} onclick={() => page = 'history'}><span class="nav-icon" aria-hidden="true">☏</span>ประวัติสายฝึก</button>
       <button class={{ active: page === 'health' }} aria-current={page === 'health' ? 'page' : undefined} onclick={() => page = 'health'}><span class="nav-icon" aria-hidden="true">◉</span>สถานะระบบ</button>
     </nav>
   </aside>
 
-  {#if page === 'health'}
+  {#if page === 'history'}
+    <main class="content" lang="th"><PhoneHistory /></main>
+  {:else if page === 'health'}
     <div class="content system-health"><Health /></div>
   {:else if page === 'monitor'}
     <main class="content" lang="th">
       <div class="breadcrumb">Call Center <span aria-hidden="true">/</span> <strong>AI Agents</strong></div>
       <header class="page-title">
-        <div><h1>Agent Studio</h1><p>สร้างและติดตามผู้ช่วยรับสายภาษาไทย</p></div>
+        <div><h1>Agent Studio</h1><p>ฝึกรับมือสายหลอกลวงกับยายมะลิ และทบทวนสิ่งที่ผู้โทรกล่าวอ้าง</p></div>
         <button class="button primary" onclick={() => edit()}>＋ สร้าง Agent</button>
       </header>
 
@@ -207,7 +211,7 @@
     <main class="content" lang="th">
       <div class="breadcrumb">Call Center <span aria-hidden="true">/</span> <strong>AI Agents</strong></div>
       <header class="page-title">
-        <div><h1>{agent.id ? 'แก้ไข Agent' : 'สร้าง Agent'}</h1><p>ตั้งค่าผู้ช่วยรับสายภาษาไทยสำหรับ Amazon Connect</p></div>
+        <div><h1>{agent.id ? 'แก้ไข Agent' : 'สร้าง Agent'}</h1><p>ตั้งบุคลิกผู้รับสายสำหรับฝึกสนทนากับมิจฉาชีพจำลอง</p></div>
         <button class="button secondary" onclick={() => page = 'monitor'}>กลับไปรายชื่อ Agents</button>
       </header>
 
@@ -229,7 +233,7 @@
             <p class="muted">บุคลิกและเป้าหมายจะบันทึกในร่าง พรีวิวจะใช้คำถามแรกและน้ำเสียงที่เลือกกับบทจำลอง</p>
             <label>บุคลิกและบทบาท<textarea rows="2" maxlength="500" bind:value={agent.persona}></textarea></label>
             <label>ข้อมูลที่ต้องการเก็บ<textarea rows="2" maxlength="500" bind:value={agent.objective}></textarea></label>
-            <label>คำถามแรกในเดโม AI Mule<input maxlength="200" bind:value={agent.openingQuestion} /></label>
+            <label>คำถามแรกในเดโมสายอ้างค่าจัดส่ง<input maxlength="200" bind:value={agent.openingQuestion} /></label>
           </section>
 
           <VoiceDemo {agent} />
