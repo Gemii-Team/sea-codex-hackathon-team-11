@@ -1,6 +1,9 @@
 services:
   api:
     image: ${API_IMAGE:?API_IMAGE is required}
+    env_file: [voice.env]
+    volumes:
+      - voice_data:/var/lib/wirachit
     environment:
       API_ADDR: ":8080"
       MONITOR_URL: http://monitor:8081
@@ -11,3 +14,6 @@ services:
       MONITOR_ADDR: ":8081"
       API_HEALTH_URL: http://api:8080/healthz
     restart: unless-stopped
+
+volumes:
+  voice_data:

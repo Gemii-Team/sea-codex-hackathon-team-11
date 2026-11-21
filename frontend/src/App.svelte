@@ -1,6 +1,7 @@
 <script>
   import { onMount } from 'svelte';
   import Health from './Health.svelte';
+  import VoiceDemo from './VoiceDemo.svelte';
   import './portal.css';
 
   const storageKey = 'wirachit.voice-agents.v1';
@@ -27,7 +28,7 @@
     persona: 'ผู้ช่วยรับสายที่ถามทีละข้อเพื่อบันทึกข้อมูลสำหรับตรวจสอบ',
     objective: 'เก็บชื่อบริษัทที่ผู้โทรอ้าง ยอดที่แจ้ง และเลขอ้างอิง',
     openingQuestion: 'ติดต่อจากบริษัทไหนคะ',
-    voiceURI: '', voiceRate: 1, voicePitch: 1
+    voiceURI: '', openAIVoice: 'marin', voiceRate: 1, voicePitch: 1
   };
 
   function loadAgents() {
@@ -305,6 +306,7 @@
             <p class="muted">ผูกเบอร์รับสายกับ Contact Flow ที่เผยแพร่ใน Amazon Connect</p>
             <a href="https://docs.aws.amazon.com/connect/latest/adminguide/associate-claimed-ported-phone-number-to-flow.html" target="_blank" rel="noreferrer">คู่มือการผูกเบอร์กับ Contact Flow ↗</a>
           </section>
+          <VoiceDemo {agent} />
           <div class="actions"><button class="button primary" type="submit">บันทึกร่าง</button><span role="status">{feedback}</span></div>
         </form>
 

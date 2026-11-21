@@ -137,3 +137,5 @@ textarea { resize: vertical; }
 }
 
 .system-health { padding-top: clamp(20px, 4vw, 54px); }
+
+.voice-summary { white-space: pre-wrap; overflow-wrap: anywhere; }
