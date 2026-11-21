@@ -81,7 +81,7 @@ function messageHtml(m) {
   const voice = m.channel === 'web_voice';
   const who = mine ? (voice ? 'You · voice' : 'You · scammer role') : (m.opening ? 'Yai Mali · opening line' : voice ? 'Yai Mali · voice' : 'Yai Mali · AI');
   const err = chatError && chatError.id === m.id ? `<div class="msg-error" role="alert">${ICON('info')}<span>${esc(chatError.text)}</span>${chatError.retry === false ? '' : `<button type="button" data-retry="${m.id}">Retry</button>`}</div>` : '';
-  return `<div class="message ${mine ? 'mine' : ''}" id="msg-${m.id}">${mine ? '' : '<img src="assets/avatar.png" alt="">'}<div class="message-body"><div class="bubble"${mine ? thAttr(m.text) : ' lang="th"'}>${esc(m.text)}</div>${n ? `<span class="capture-chip">${ICON('book')}Yai noted ${n} ${n === 1 ? 'clue' : 'clues'}</span>` : ''}<div class="message-meta"><span>${who}</span><time>${fmtTime(m.at)}</time></div>${err}</div></div>`;
+  return `<div class="message ${mine ? 'mine' : ''}" id="msg-${m.id}">${mine ? '' : '<img src="assets/avatar.png" alt="">'}<div class="message-body"><div class="bubble" translate="no"${mine ? thAttr(m.text) : ' lang="th"'}>${esc(m.text)}</div>${n ? `<span class="capture-chip">${ICON('book')}Yai noted ${n} ${n === 1 ? 'clue' : 'clues'}</span>` : ''}<div class="message-meta"><span>${who}</span><time>${fmtTime(m.at)}</time></div>${err}</div></div>`;
 }
 function renderMessages() {
   const box = $('messages');
@@ -97,7 +97,7 @@ function renderIntel() {
   $('turnStat').innerHTML = `${state.messages.filter(x => x.role === 'user').length}<small>msgs</small>`;
   $('tactics').innerHTML = state.tactics.length ? state.tactics.map(t => `<span>${esc(t)}</span>`).join('') : '<span class="neutral-tag">Waiting for your first message</span>';
   $('reportButton').disabled = !n;
-  if (n) $('evidenceList').innerHTML = state.intel.map(e => `<article class="evidence-card"><div class="evidence-card-top"><span>${esc(TYPE[e.type] || e.type)}</span><span>Unverified</span></div><div class="evidence-value">${esc(e.value)}</div><button class="evidence-source" data-source="${e.messageId}" title="Show the source message"><span${thAttr(e.quote)}>“${esc(e.quote)}”</span> · View source</button></article>`).join('');
+  if (n) $('evidenceList').innerHTML = state.intel.map(e => `<article class="evidence-card"><div class="evidence-card-top"><span>${esc(TYPE[e.type] || e.type)}</span><span>Unverified</span></div><div class="evidence-value" translate="no">${esc(e.value)}</div><button class="evidence-source" data-source="${e.messageId}" title="Show the source message"><span translate="no"${thAttr(e.quote)}>“${esc(e.quote)}”</span> · View source</button></article>`).join('');
   else $('evidenceList').innerHTML = '<div class="empty-state"><div class="empty-book">' + ICON('book') + '<span>✿</span></div><h3>The notebook is empty so far</h3><p>Send an account number, phone number or link<br>and Yai will write it down here.</p><div class="empty-example">e.g. <span lang="th">“โอนมาที่บัญชี 000-0-00000-0”</span></div></div>';
   updateClock();
 }
@@ -309,7 +309,7 @@ $('autoButton').addEventListener('click', async () => {
 
 // ---- Review and export
 $('reportButton').addEventListener('click', () => {
-  $('reportSummary').innerHTML = state.intel.map(e => `<div class="report-item">${esc(TYPE[e.type] || e.type)}<b>${esc(e.value)}</b><small>Source: <span${thAttr(e.quote)}>“${esc(e.quote)}”</span></small></div>`).join('');
+  $('reportSummary').innerHTML = state.intel.map(e => `<div class="report-item">${esc(TYPE[e.type] || e.type)}<b translate="no">${esc(e.value)}</b><small>Source: <span translate="no"${thAttr(e.quote)}>“${esc(e.quote)}”</span></small></div>`).join('');
   $('reviewCheck').checked = state.reviewed;
   $('reportDialog').showModal();
 });
@@ -381,7 +381,7 @@ function renderCallControls() {
 }
 function renderVoiceTranscript() {
   const box = $('voiceTranscript');
-  box.innerHTML = state.messages.length > 1 ? state.messages.slice(-30).map(m => `<p class="voice-line ${m.role}" id="vline-${m.id}"><b>${m.role === 'user' ? 'You' : 'Yai'}</b><span${m.role === 'user' ? thAttr(m.text) : ' lang="th"'}>${esc(m.text)}</span></p>`).join('') : '<p class="voice-placeholder">What you and Yai say shows up here<br>Clues go into the notebook beside it</p>';
+  box.innerHTML = state.messages.length > 1 ? state.messages.slice(-30).map(m => `<p class="voice-line ${m.role}" id="vline-${m.id}"><b>${m.role === 'user' ? 'You' : 'Yai'}</b><span translate="no"${m.role === 'user' ? thAttr(m.text) : ' lang="th"'}>${esc(m.text)}</span></p>`).join('') : '<p class="voice-placeholder">What you and Yai say shows up here<br>Clues go into the notebook beside it</p>';
   box.scrollTop = box.scrollHeight;
   renderCallControls();
 }
