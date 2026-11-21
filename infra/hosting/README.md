@@ -9,6 +9,8 @@ Run every command below from `infra/hosting/`. Credentials come from `.env` at t
 `CLOUNDFLARE_API_TOKEN` also works; `ENV_FILE=/path/.env` overrides the location). The Cloudflare token
 needs *Account → Cloudflare Tunnel → Edit* and *Zone → DNS → Edit* on `voidbox.io`.
 
+If your shared `.env` also contains **Connect Customer** or other app credentials, run hosting commands through `../../connect-web-call/bin/with-aws hosting`, e.g. `../../connect-web-call/bin/with-aws hosting bin/tf plan`. This checks the hosting account, passes only hosting credentials, and accepts `KEY = value` without evaluating the file as shell. The legacy unwrapped commands expect a trusted shell-compatible hosting-only file.
+
 | Path | What it is |
 |---|---|
 | `*.tf` | OpenTofu: server, IAM role, ECR, budget, tunnel, DNS record. State in S3. |

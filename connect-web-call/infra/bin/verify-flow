@@ -1,0 +1,68 @@
+#!/usr/bin/env bash
+# Read-only live check after the first apply. The AWS provider cannot set or read a flow's publication
+# status, so this proves the greeting flow really is a PUBLISHED, ACTIVE inbound CONTACT_FLOW whose stored
+# runtime definition (start action, actions, transitions, parameters; not designer Metadata) matches
+# flows/web-call.json. It prints the checks only, never the flow content.
+#   connect-web-call/bin/with-aws infra connect-web-call/infra/bin/verify-flow <instance-id> <flow-id>
+# Get both IDs from the `instance_id` and `flow_id` outputs. Use the wrapper's `infra` scope: it creates the
+# poc-connect profile, which must resolve to account 086971655102 or this aborts before any Connect call.
+set -euo pipefail
+
+profile="poc-connect"
+region="ap-southeast-1"
+account="086971655102"
+flow_name="team-eleven-web-call-greeting"
+
+die() {
+  echo "error: $*" >&2
+  exit 1
+}
+
+[ "$#" -eq 2 ] || die "usage: verify-flow <instance-id> <flow-id>"
+instance_id="$1"
+flow_id="$2"
+command -v aws >/dev/null 2>&1 || die "aws CLI is required"
+command -v jq >/dev/null 2>&1 || die "jq is required"
+
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+expected="$root/flows/web-call.json"
+[ -f "$expected" ] || die "$expected not found"
+
+# No credential source other than the named profile; the shared files come from the wrapper.
+unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_PROFILE AWS_DEFAULT_PROFILE AWS_REGION AWS_DEFAULT_REGION
+export AWS_EC2_METADATA_DISABLED=true
+
+actual_account="$(aws sts get-caller-identity --profile "$profile" --region "$region" --query Account --output text)" ||
+  die "profile $profile cannot call STS; run under the credential wrapper"
+[ "$actual_account" = "$account" ] || die "profile $profile resolved to the wrong account; expected $account"
+
+described="$(aws connect describe-contact-flow --profile "$profile" --region "$region" \
+  --instance-id "$instance_id" --contact-flow-id "$flow_id" --output json)" ||
+  die "describe-contact-flow failed for the given instance and flow IDs"
+
+status=0
+check() { # check <jq filter that must be true> <description>
+  if printf '%s' "$described" | jq -e --slurpfile want "$expected" --arg name "$flow_name" "$1" >/dev/null 2>&1; then
+    echo "ok:   $2"
+  else
+    echo "FAIL: $2" >&2
+    status=1
+  fi
+}
+
+check '.ContactFlow.Status == "PUBLISHED"' "flow status is PUBLISHED"
+check '.ContactFlow.State == "ACTIVE"' "flow state is ACTIVE"
+check '.ContactFlow.Type == "CONTACT_FLOW"' "flow type is CONTACT_FLOW (ordinary inbound flow)"
+# These single-quoted variables belong to jq (--arg / --slurpfile), not bash.
+# shellcheck disable=SC2016
+check '.ContactFlow.Name == $name' "flow name is $flow_name"
+# Runtime definition only: Version, StartAction and every action (Type, Parameters, Transitions with errors
+# and conditions). Designer Metadata (positions, layout) is presentation and is ignored.
+# shellcheck disable=SC2016
+check 'def runtime: {Version, StartAction, Actions: (.Actions | sort_by(.Identifier))}; (.ContactFlow.Content | fromjson | runtime) == ($want[0] | runtime)' "stored flow runtime definition (start, actions, transitions, parameters) equals flows/web-call.json"
+
+if [ "$status" -ne 0 ]; then
+  echo "verify-flow: FAILED. If the status is SAVED, publish the flow once in the admin site (Routing > Flows) and run this again." >&2
+  exit 1
+fi
+echo "verify-flow: ok"

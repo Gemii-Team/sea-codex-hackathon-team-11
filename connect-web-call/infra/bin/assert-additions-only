@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# Gate for the first live plan: it must only add the two Connect resources.
+# Reads `tofu show -json <saved plan>` on stdin; prints only resource addresses and actions, never values.
+#   connect-web-call/bin/with-aws infra tofu -chdir=connect-web-call/infra show -json connect.tfplan | connect-web-call/infra/bin/assert-additions-only
+# Exit 0: the plan creates exactly aws_connect_instance.this and aws_connect_contact_flow.greeting and does
+# nothing else. Exit 1: any other, missing, updated, replaced or deleted resource. Exit 2: jq is missing.
+set -euo pipefail
+
+command -v jq >/dev/null 2>&1 || {
+  echo "error: jq is required" >&2
+  exit 2
+}
+
+plan="$(cat)"
+
+if printf '%s' "$plan" | jq -e '
+  ["aws_connect_contact_flow.greeting", "aws_connect_instance.this"] as $allowed
+  | [(.resource_changes // [])[] | select(.change.actions != ["no-op"])] as $changes
+  | (($changes | map(.address) | sort) == $allowed)
+    and ($changes | all(.change.actions == ["create"]))
+' >/dev/null 2>&1; then
+  echo "ok: the plan only creates aws_connect_instance.this and aws_connect_contact_flow.greeting"
+else
+  echo "error: not an additions-only plan of the two Connect resources. Planned changes:" >&2
+  printf '%s' "$plan" |
+    jq -r '(.resource_changes // [])[] | select(.change.actions != ["no-op"]) | "  \(.address): \(.change.actions | join(","))"' >&2 ||
+    echo "  (could not parse the plan JSON)" >&2
+  exit 1
+fi

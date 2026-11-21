@@ -1,0 +1,117 @@
+#!/usr/bin/env python3
+"""Run an operator command with verified AWS identities; never evaluate a dotenv as shell."""
+import argparse
+import configparser
+import json
+import os
+from pathlib import Path
+import re
+import signal
+import subprocess
+import tempfile
+
+
+REGION = 'ap-southeast-1'
+ACCOUNTS = {'hosting': '157264476192', 'connect': '086971655102'}
+KEYS = {'AWS_ACCESS_KEY_ID': 'aws_access_key_id', 'AWS_SECRET_ACCESS_KEY': 'aws_secret_access_key',
+        'AWS_SESSION_TOKEN': 'aws_session_token'}
+REPO_ENV = Path(__file__).resolve().parents[2] / '.env'
+
+
+def read_values(path, names):
+    values = {}
+    for line in path.read_text(encoding='utf-8-sig').splitlines():
+        match = re.fullmatch(r'\s*(?:export\s+)?([A-Za-z_][A-Za-z_0-9]*)\s*=\s*(.*?)\s*', line)
+        if not match or match[1] not in names:
+            continue
+        key, value = match.groups()
+        if len(value) >= 2 and value[0] in ('"', "'") and value[-1] == value[0]:
+            value = value[1:-1]
+        if key in values or not value or any(c.isspace() or not c.isprintable() for c in value):
+            raise SystemExit(f'{path}: duplicate, empty or invalid {key}; values withheld')
+        values[key] = value
+    return values
+
+
+def credentials(values, scope):
+    suffix = '' if scope == 'hosting' else '_CONNECT_CUSTOMER'
+    result = {key: values[key + suffix] for key in KEYS if key + suffix in values}
+    if not all(k in result for k in ('AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY')):
+        raise SystemExit(f'Missing {scope} credential pair; no command was run')
+    return result
+
+
+def verify(env, scope):
+    reply = subprocess.run(['aws', 'sts', 'get-caller-identity', '--query', 'Account', '--output', 'text'],
+                           env=env, text=True, capture_output=True, timeout=30)
+    if reply.returncode or reply.stdout.strip() != ACCOUNTS[scope]:
+        raise SystemExit(f'{scope}: AWS identity check failed (expected {ACCOUNTS[scope]}); no command was run')
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--connect-profile', help='explicit named AWS CLI profile in place of the Connect dotenv pair')
+    parser.add_argument('scope', choices=['infra', 'hosting', 'connect'])
+    parser.add_argument('command', nargs=argparse.REMAINDER)
+    args = parser.parse_args()
+    if not args.command or (args.scope == 'hosting' and args.connect_profile):
+        parser.error('supply a command; --connect-profile only applies to connect or infra')
+    scopes = ACCOUNTS.keys() if args.scope == 'infra' else (args.scope,)
+    names = {k + ('' if s == 'hosting' else '_CONNECT_CUSTOMER') for s in scopes for k in KEYS}
+    cf_keys = ('CLOUDFLARE_API_TOKEN', 'CLOUNDFLARE_API_TOKEN')
+    if args.scope == 'hosting':
+        names.update(cf_keys)
+    values = read_values(Path(os.environ.get('ENV_FILE', REPO_ENV)), names)
+    # Deliberately omit AWS_*, TF_CLI_ARGS*, arbitrary secrets and debug logging controls.
+    env = {k: os.environ[k] for k in ('PATH', 'HOME', 'USER', 'TMPDIR', 'LANG', 'TERM', 'DOCKER_HOST',
+           'DOCKER_CONTEXT', 'DOCKER_CONFIG', 'SSH_AUTH_SOCK', 'TF_PLUGIN_CACHE_DIR', 'SSL_CERT_FILE') if k in os.environ}
+    env.update(AWS_REGION=REGION, AWS_DEFAULT_REGION=REGION, AWS_EC2_METADATA_DISABLED='true',
+               AWS_IGNORE_CONFIGURED_ENDPOINT_URLS='true', AWS_PAGER='', ENV_FILE=os.devnull)
+    selected = {}
+    for scope in scopes:
+        if scope == 'connect' and args.connect_profile:
+            p = subprocess.run(['aws', 'configure', 'export-credentials', '--profile', args.connect_profile,
+                                '--format', 'process'], env=env, capture_output=True, text=True)
+            if p.returncode:
+                raise SystemExit('Could not resolve the specified Connect profile')
+            cred = json.loads(p.stdout)
+            selected[scope] = {'AWS_ACCESS_KEY_ID': cred['AccessKeyId'], 'AWS_SECRET_ACCESS_KEY': cred['SecretAccessKey']}
+            if cred.get('SessionToken'):
+                selected[scope]['AWS_SESSION_TOKEN'] = cred['SessionToken']
+        else:
+            selected[scope] = credentials(values, scope)
+    env.update(AWS_CONFIG_FILE=os.devnull, AWS_SHARED_CREDENTIALS_FILE=os.devnull)
+    if args.scope != 'infra':
+        env.update(selected[args.scope]); verify(env, args.scope)
+        if args.scope == 'hosting':
+            for k in cf_keys:
+                if k in values:
+                    env['CLOUDFLARE_API_TOKEN'] = values[k]; break
+        os.execvpe(args.command[0], args.command, env)
+    # Tofu's S3 backend and AWS provider each select their own profile. Never put keys in HCL or -backend-config.
+    child = None
+
+    def terminate(signum, _frame):
+        if child is None:
+            raise SystemExit(128 + signum)
+        child.send_signal(signum)
+
+    for signum in (signal.SIGTERM, signal.SIGHUP):
+        signal.signal(signum, terminate)
+    with tempfile.TemporaryDirectory(prefix='connect-poc-') as tmp:
+        path = Path(tmp) / 'credentials'
+        config = configparser.RawConfigParser()
+        for scope, creds in selected.items():
+            config[f'poc-{scope}'] = {KEYS[k]: v for k, v in creds.items()}
+        with open(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), 'w') as f:
+            config.write(f)
+        env['AWS_SHARED_CREDENTIALS_FILE'] = str(path)
+        for scope in scopes:
+            verify(dict(env, AWS_PROFILE=f'poc-{scope}'), scope)
+        with subprocess.Popen(args.command, env=env) as child:
+            rc = child.wait()
+        return rc if rc >= 0 else 128 - rc
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())
