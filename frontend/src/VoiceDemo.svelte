@@ -126,6 +126,20 @@
     channel.send(JSON.stringify(event));
   }
 
+  function ployReply(words, profile) {
+    let line;
+    if (/พร้อมเพย์|พร้อมเพ/.test(words) && /คืน|โอนให้/.test(words)) {
+      line = 'ผูกกับเบอร์มือถือจ้ะ ป้าจำได้แค่ท้าย สอง เจ็ด สี่ สอง';
+    } else if (/ตีกลับ|กลับมา/.test(words) && /ร้าน/.test(words)) {
+      line = /พัสดุ|สินค้า/.test(words) ? 'พัสดุอะไรตีกลับเหรอจ๊ะ' : 'อะไรกลับมาที่ร้านนะจ๊ะ ป้าได้ยินไม่ชัด';
+    }
+    if (line) return 'พูดภาษาไทยเฉพาะประโยคนี้ตามตัวอักษร แล้วหยุดรอ: ' + line;
+    return `คุณรับสายตามบท ${profile.Persona} น้ำเสียง ${profile.Tone} เป้าหมาย ${profile.Objective}
+ตอบคำถามล่าสุดด้วยประโยคสั้น ๆ ให้คนโทรอธิบายข้ออ้างต่อ ถ้าได้ยินไม่ชัด ให้ขอให้พูดซ้ำ
+ใช้เฉพาะรายละเอียดที่ผู้โทรบอกแล้ว ห้ามเติมชื่อร้าน จำนวนเงิน หรือวันเวลาเอง ห้ามให้ข้อมูลส่วนตัวจริงหรือทำธุรกรรม
+คำแนะนำตัวละคร: ${profile.Instructions}`;
+  }
+
   async function start() {
     if (call || saving || !consent) return;
     sampleRequest++;
@@ -142,7 +156,7 @@
     savedRecording = null;
     status = 'starting';
     const profile = {
-      Name: agent.name, Persona: agent.persona, Objective: agent.objective,
+      AgentID: agent.id, Name: agent.name, Persona: agent.persona, Objective: agent.objective,
       Greeting: agent.greeting, Instructions: agent.instructions,
       Question: agent.openingQuestion, Tone: agent.tone, Voice: agent.openAIVoice
     };
@@ -194,7 +208,10 @@
       channel.onmessage = ({ data }) => {
         if (call !== current) return;
         const event = JSON.parse(data);
-        if (event.type === 'input_audio_buffer.speech_started') current.speaking = true;
+        if (event.type === 'input_audio_buffer.speech_started') {
+          current.speaking = true;
+          current.latestSpeakerItem = event.item_id;
+        }
         if (event.type === 'input_audio_buffer.committed') {
           current.speaking = false;
           if (!current.callerTurns.has(event.item_id)) current.callerTurns.set(event.item_id, null);
@@ -202,7 +219,13 @@
         }
         if (event.type === 'conversation.item.input_audio_transcription.completed' ||
             event.type === 'conversation.item.input_audio_transcription.failed') {
-          current.callerTurns.set(event.item_id, event.transcript?.trim() ?? '');
+          const transcript = event.transcript?.trim() ?? '';
+          const firstResult = current.callerTurns.get(event.item_id) == null;
+          current.callerTurns.set(event.item_id, transcript);
+          if (profile.AgentID === 'infra-phone-ploy' && status === 'live' && firstResult &&
+              current.latestSpeakerItem === event.item_id && !current.speaking && transcript) {
+            send(channel, { type: 'response.create', response: { instructions: ployReply(transcript, profile) } });
+          }
           pendingTurns = [...current.callerTurns.values()].filter((text) => text === null).length;
           if (status === 'summarizing' && !pendingTurns) requestSummary(current);
         }
