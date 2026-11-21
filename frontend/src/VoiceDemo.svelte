@@ -2,10 +2,31 @@
   import { onDestroy } from 'svelte';
 
   let { agent } = $props();
+  let samplePlayer;
+  let sampleStatus = $state('');
+  let sampleRequest = 0;
+  onDestroy(() => { sampleRequest++; samplePlayer?.pause(); });
+
+  async function selectVoice(voice) {
+    const request = ++sampleRequest;
+    agent.openAIVoice = voice;
+    samplePlayer?.pause();
+    samplePlayer = new Audio('/api/v1/voice/samples/' + voice);
+    sampleStatus = 'กำลังโหลดตัวอย่างเสียง';
+    samplePlayer.onended = () => { if (sampleRequest === request) sampleStatus = ''; };
+    try {
+      await samplePlayer.play();
+      if (sampleRequest === request) sampleStatus = 'กำลังเล่นตัวอย่างเสียง';
+    } catch {
+      if (sampleRequest === request) sampleStatus = 'เล่นตัวอย่างไม่ได้ กดที่เสียงอีกครั้งเพื่อลองใหม่';
+    }
+  }
+
   let code = $state('');
   let status = $state('idle');
   let notice = $state('');
   let summary = $state('');
+  let showCode = $state(false);
   let consent = $state(false);
   let recordingStatus = $state('');
   let savedRecording = $state.raw(null);
@@ -79,6 +100,9 @@
 
   async function start() {
     if (call || saving || !consent || !code.trim()) return;
+    sampleRequest++;
+    samplePlayer?.pause();
+    sampleStatus = '';
     if (!window.MediaRecorder?.isTypeSupported('audio/webm;codecs=opus')) {
       notice = 'เบราว์เซอร์นี้บันทึกเสียง WebM ไม่ได้ กรุณาใช้ Chrome หรือ Edge';
       return;
@@ -239,13 +263,21 @@
 </script>
 
 <section class="card voice-demo" aria-labelledby="voice-demo-title">
-  <h2 id="voice-demo-title">คุยสดกับ OpenAI</h2>
-  <label>เสียง OpenAI<select bind:value={agent.openAIVoice} disabled={status !== 'idle'}>
-    <option value="marin">Marin</option>
-    <option value="cedar">Cedar</option>
-    <option value="coral">Coral</option>
-  </select></label>
-  <label>รหัสเข้าทดสอบ<input type="password" autocomplete="off" bind:value={code} disabled={status !== 'idle'} /></label>
+  <h2 id="voice-demo-title">เสียงของ Agent</h2>
+  <p class="muted">กดเพื่อฟังคำทักทายตัวอย่างและเลือกเสียงสำหรับคุยสด</p>
+  <div class="voice-choices" role="group" aria-label="เลือกและฟังเสียงภาษาไทย">
+    {#each ['marin', 'cedar', 'coral'] as voice (voice)}
+      <button type="button" class="button secondary voice-choice" disabled={status !== 'idle'}
+        aria-pressed={agent.openAIVoice === voice} onclick={() => selectVoice(voice)}>
+        <span aria-hidden="true">▶</span> {voice[0].toUpperCase() + voice.slice(1)}
+        {#if agent.openAIVoice === voice}<span aria-hidden="true">✓</span>{/if}
+      </button>
+    {/each}
+  </div>
+  {#if sampleStatus}<p class="muted" role="status">{sampleStatus}</p>{/if}
+  <h3>คุยสดกับ OpenAI</h3>
+  <label>รหัสเข้าทดสอบ<input type={showCode ? 'text' : 'password'} autocomplete="off" spellcheck="false" bind:value={code} disabled={status !== 'idle'} /></label>
+  <label class="recording-consent"><input type="checkbox" bind:checked={showCode} /> แสดงรหัส</label>
   <label class="recording-consent"><input type="checkbox" bind:checked={consent} disabled={status !== 'idle'} /> ทุกคนในสายทดสอบยินยอมให้บันทึกเสียง</label>
   <div class="preview-actions">
     {#if status === 'idle'}
@@ -268,3 +300,8 @@
     <p class="voice-summary">{summary}</p>
   {/if}
 </section>
+
+<style>
+  .voice-choices { display: flex; flex-wrap: wrap; gap: .5rem; }
+  .voice-choice[aria-pressed="true"] { background: #e7f1df; border-color: #557954; color: #213f2c; }
+</style>
