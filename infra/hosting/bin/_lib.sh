@@ -10,11 +10,13 @@ die() {
   exit 1
 }
 
-[ -f "$env_file" ] || die ".env not found at $env_file (set ENV_FILE to use another path or /dev/null for exported credentials)"
-set -a
-# shellcheck disable=SC1090
-. "$env_file"
-set +a
+if [ "$env_file" != /dev/null ]; then
+  [ -f "$env_file" ] || die ".env not found at $env_file (set ENV_FILE to use another path or /dev/null for exported credentials)"
+  set -a
+  # shellcheck disable=SC1090
+  . "$env_file"
+  set +a
+fi
 
 # Accept the misspelled name already in .env; the Cloudflare provider reads CLOUDFLARE_API_TOKEN.
 export CLOUDFLARE_API_TOKEN="${CLOUDFLARE_API_TOKEN:-${CLOUNDFLARE_API_TOKEN:-}}"
