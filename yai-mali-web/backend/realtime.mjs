@@ -223,7 +223,8 @@ export function createVoiceProvider({
       instructions: voiceInstructions(scenario),
       max_output_tokens: 400,
       audio: {
-        input: { transcription: { model: TRANSCRIPTION_MODEL, language: 'th' } },
+        // far_field: laptop mics hear the room and the speakers; filter before Yai's turn detection.
+        input: { noise_reduction: { type: 'far_field' }, transcription: { model: TRANSCRIPTION_MODEL, language: 'th' } },
         output: { voice: VOICE },
       },
     }));

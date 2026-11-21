@@ -358,17 +358,23 @@ function setCall(kind, text, help) {
   if (help !== undefined) $('callHelp').textContent = help;
   renderCallControls();
 }
-function liveStatus(s) { setCall('live', s.responding ? 'Yai is answering…' : 'Your turn · speak Thai or type below'); }
+function liveStatus(s) { setCall('live', s.responding ? 'Yai is answering…' : s.muted ? 'Mic muted · unmute to talk, or type below' : 'Your turn · speak Thai or type below'); }
 // Audio is only reported as connected once the remote track is live and the element is actually playing.
 function refreshHelp(s) {
   if (!s || s.ended || session !== s) return;
   const flowing = s.track?.readyState === 'live' && !s.track.muted && s.playing;
-  $('callHelp').textContent = !s.opened ? 'Connecting audio…' : s.blocked ? 'Your browser blocked audio. Press Enable speaker to hear Yai.' : flowing ? "Microphone on · Yai's voice is connected." : "Microphone on · waiting for Yai's voice…";
+  const mic = s.muted ? 'Microphone off' : 'Microphone on';
+  $('callHelp').textContent = !s.opened ? 'Connecting audio…' : s.blocked ? 'Your browser blocked audio. Press Enable speaker to hear Yai.' : flowing ? `${mic} · Yai's voice is connected.` : `${mic} · waiting for Yai's voice…`;
 }
 function renderCallControls() {
   const s = session, live = isLive(s);
   $('startCall').hidden = !!s;
   $('endCall').hidden = !s;
+  // Mute only stops the microphone track: Yai stays audible and typed lines still reach her.
+  const mute = $('muteMic');
+  mute.hidden = !live;
+  mute.setAttribute('aria-pressed', String(!!s?.muted));
+  mute.querySelector('span').textContent = s?.muted ? 'Unmute mic' : 'Mute mic';
   $('callStage').classList.toggle('speaking', live && s.responding);
   $('callStage').classList.toggle('listening', live && !s.responding);
   $('callTimer').hidden = !live;
@@ -510,7 +516,8 @@ async function startCall() {
   setCall('connecting', 'Connecting… allow the microphone when asked.', '');
   try {
     if (!navigator.mediaDevices?.getUserMedia || !window.RTCPeerConnection) throw Object.assign(new Error('unsupported'), {unsupported: true});
-    s.stream = await navigator.mediaDevices.getUserMedia({audio: true});
+    // Ask explicitly for echo cancellation: on laptop speakers Yai's own voice must not reach the mic.
+    s.stream = await navigator.mediaDevices.getUserMedia({audio: {echoCancellation: true, noiseSuppression: true, autoGainControl: true}});
     if (s.ended) return release(s);
 
     const pc = (s.pc = new RTCPeerConnection());
@@ -617,6 +624,14 @@ $('endCall').addEventListener('click', () => {
   setCall('connecting', 'Ending call…', '');
   end(s, 'ended', s.opened || s.callId ? 'Call ended.' : 'Call cancelled.');
   toast("Call ended · clues stay in Yai's notebook");
+});
+$('muteMic').addEventListener('click', () => {
+  const s = session;
+  if (!isLive(s) || !s.stream) return;
+  s.muted = !s.muted;
+  for (const track of s.stream.getAudioTracks()) track.enabled = !s.muted;
+  if (s.responding) renderCallControls(); else liveStatus(s);
+  refreshHelp(s);
 });
 $('voiceTextForm').addEventListener('submit', e => { e.preventDefault(); voiceSend($('voiceTextInput').value); });
 // pagehide (not visibilitychange: switching tabs must not hang up).
