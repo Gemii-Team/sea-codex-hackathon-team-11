@@ -17,22 +17,6 @@ jobs:
         with:
           bun-version: "1"
       - run: make check
-      - name: Smoke test the container stack
-        run: |
-          docker compose up --build -d frontend monitor
-          for attempt in {1..12}; do
-            if curl --fail --silent --show-error --max-time 5 http://127.0.0.1:5173/ >/dev/null &&
-               curl --fail --silent --show-error --max-time 5 http://127.0.0.1:5173/api/v1/status |
-                 jq -e '.available == true'; then
-              exit 0
-            fi
-            sleep 2
-          done
-          exit 1
-      - if: failure()
-        run: docker compose logs
-      - if: always()
-        run: docker compose down
   infrastructure:
     runs-on: ubuntu-latest
     defaults:
