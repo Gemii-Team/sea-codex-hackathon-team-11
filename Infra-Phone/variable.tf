@@ -1,3 +1,9 @@
+variable "enable_connect" {
+  description = "Provision Amazon Connect and its interaction-log bucket for the optional Connect voice path."
+  type        = bool
+  default     = false
+}
+
 variable "aws_region" {
   description = "AWS Region for Web Calling and conversation storage."
   type        = string

@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="เดโมสนทนาภาษาไทยและเปิดดูประวัติการคุย">
+  <title>ห้องทดสอบสาย · ทีม 11</title>
+  <link rel="stylesheet" href="/style.css">
+  <script type="module" src="/app.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="wrap topbar-inner">
+      <div class="brand"><span class="brand-icon" aria-hidden="true">▮▁▆</span> ห้องทดสอบสาย <span class="team">ทีม 11</span></div>
+      <span id="storage" class="storage"></span>
+    </div>
+  </header>
+  <main class="wrap">
+    <div class="intro">
+      <h1>ทดสอบสายสนทนา</h1>
+      <p>คุยกับผู้ช่วยภาษาไทย แล้วเปิดดูบทสนทนาหลังวางสาย</p>
+    </div>
+    <div class="layout">
+      <section class="call-card" aria-labelledby="call-heading">
+        <div class="call-top">
+          <div class="avatar" aria-hidden="true">พ</div>
+          <h2 id="call-heading">พลอย</h2>
+          <p>ผู้ช่วยอัตโนมัติภาษาไทย</p>
+        </div>
+        <div class="wave" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+        <div class="call-controls">
+          <label for="contact-name">ชื่อผู้ติดต่อ <span>ไม่บังคับ</span></label>
+          <input id="contact-name" maxlength="80" placeholder="เช่น ผู้ทดสอบ A" autocomplete="off">
+          <button id="start" class="call-button" type="button" disabled>เริ่มสาย</button>
+          <button id="finish" class="call-button hangup" type="button" hidden>วางสาย</button>
+          <p id="call-status" role="status">กำลังตรวจการตั้งค่า…</p>
+          <audio id="remote" autoplay></audio>
+        </div>
+      </section>
+      <section class="history" aria-labelledby="history-heading">
+        <div class="history-heading">
+          <h2 id="history-heading">ประวัติการสนทนา</h2>
+          <button id="refresh" class="quiet" type="button">รีเฟรช</button>
+        </div>
+        <div class="history-body">
+          <nav aria-label="รายการสาย">
+            <p id="history-status" role="status">กำลังโหลด…</p>
+            <ol id="history-list"></ol>
+          </nav>
+          <article id="detail" aria-label="รายละเอียดบทสนทนา" aria-busy="true">
+            <div class="detail-empty">เลือกสายเพื่อดูรายละเอียด</div>
+          </article>
+        </div>
+      </section>
+    </div>
+  </main>
+  <dialog id="evidence-dialog" aria-labelledby="evidence-heading">
+    <div class="evidence-heading">
+      <h2 id="evidence-heading">หลักฐานจากคำพูดผู้โทร</h2>
+      <button id="evidence-close" class="quiet" type="button">ปิด</button>
+    </div>
+    <form id="evidence-form">
+      <label for="evidence-key">รหัสเปิดหลักฐาน</label>
+      <div class="evidence-unlock">
+        <input id="evidence-key" type="password" autocomplete="off" maxlength="128" required>
+        <button id="evidence-submit" class="quiet" type="submit">ปลดล็อก</button>
+      </div>
+    </form>
+    <p id="evidence-status" role="status"></p>
+    <dl id="evidence-list"></dl>
+  </dialog>
+</body>
+</html>

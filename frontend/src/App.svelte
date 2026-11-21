@@ -1,14 +1,15 @@
 <script>
-  import { onMount } from 'svelte';
+  import PhoneHistory from './PhoneHistory.svelte';
   import Health from './Health.svelte';
   import VoiceDemo from './VoiceDemo.svelte';
   import './portal.css';
 
   const storageKey = 'wirachit.voice-agents.v1';
   const scenarios = {
+    promptpay: { label: 'สายขอพร้อมเพย์เพื่อคืนเงิน', caller: 'ผมจะคืนค่าจัดส่งครับ ขอพร้อมเพย์คุณยายหน่อยครับ', reply: 'อ๋อ จะคืนค่าส่งเหรอจ๊ะ ของยายผูกกับมือถือ ยายจำได้แต่ท้ายสอง เจ็ด สี่ สองจ้ะ' },
     message: { label: 'ฝากข้อความ', caller: 'ขอฝากข้อความให้ติดต่อกลับได้ไหมครับ', reply: 'ได้เลยค่ะ ขอทราบชื่อของคุณก่อนนะคะ' },
     support: { label: 'สอบถามบริการ', caller: 'ขอสอบถามเรื่องบริการหน่อยครับ', reply: 'ยินดีค่ะ คุณสนใจสอบถามเรื่องอะไรคะ' },
-    mule: { label: 'AI Mule · สอบถามรายการ', caller: 'คุณมีค่าจัดส่งค้างอยู่ครับ' }
+    mule: { label: 'สายอ้างค่าจัดส่ง', caller: 'คุณมีค่าจัดส่งค้างอยู่ครับ' }
   };
   const muleFollowUps = {
     'เป็นกันเอง': 'ขอรายละเอียดไว้ตรวจสอบหน่อยนะคะ',
@@ -21,21 +22,30 @@
     { label: 'เลขอ้างอิง', value: 'DEMO-042', quote: 'เลขอ้างอิง DEMO-042 ครับ' }
   ];
   const emptyAgent = {
-    id: '', name: 'ผู้ช่วยรับสาย', business: 'Wirachit', tone: 'เป็นกันเอง',
-    greeting: 'สวัสดีค่ะ นี่คือผู้ช่วย AI ของ Wirachit ค่ะ มีอะไรให้ช่วยไหมคะ',
-    instructions: 'ถามชื่อและเรื่องที่ติดต่อ จากนั้นทวนเบอร์โทรกลับทีละหลัก',
+    id: '', name: 'ยายมะลิ', business: 'Wirachit', tone: 'เป็นกันเอง',
+    greeting: 'สวัสดีจ้ะ ยายมะลิรับสายจ้ะ หนูโทรมาเรื่องอะไรเหรอ',
+    instructions: 'ตอบคำขอของผู้โทรตามบทก่อน ถ้าคุยเรื่องรับเงินคืนให้บอกข้อมูลพร้อมเพย์สมมติของยายได้ ถ้ายังไม่เข้าใจค่อยถามต่อทีละเรื่อง',
     region: 'ap-southeast-1', instance: '', flow: '', number: '',
-    persona: 'ผู้ช่วยรับสายที่ถามทีละข้อเพื่อบันทึกข้อมูลสำหรับตรวจสอบ',
+    persona: 'ยายมะลิ อดีตครูที่พูดช้าและสุภาพ เมื่อมีคนโทรมาอ้างว่าต้องจ่ายเงิน ยายอยากรู้ว่าเป็นค่าอะไรและตรวจสอบได้อย่างไร',
     objective: 'เก็บชื่อบริษัทที่ผู้โทรอ้าง ยอดที่แจ้ง และเลขอ้างอิง',
     openingQuestion: 'ติดต่อจากบริษัทไหนคะ',
     voiceURI: '', openAIVoice: 'marin', voiceRate: 1, voicePitch: 1
   };
 
+  const ploy = {
+    ...emptyAgent, id: 'infra-phone-ploy', name: 'ป้าพลอย', business: 'สายฝึกมิจฉาชีพ',
+    persona: 'ป้าพลอย อายุ 68 ปี ใช้มือถือโทรหาหลานเป็นหลัก คุยเป็นกันเอง แทนตัวเองว่าป้า',
+    greeting: 'ฮัลโหล ป้าพลอยพูดจ้ะ ใครโทรมาจ๊ะ',
+    objective: 'ให้ผู้โทรเล่าด้วยตัวเองว่าติดต่อเรื่องอะไร ต้องการให้ป้าทำอะไร และอ้างข้อมูลอะไรสนับสนุน',
+    instructions: 'รับคำสั้น ๆ แล้วรอฟัง ถ้ามีคนอ้างว่ามีพัสดุ ให้สนใจว่าพัสดุอะไร หากเขาบอกแล้วให้ถามเฉพาะรายละเอียดที่ยังขาด ไม่เสนอชื่อบริษัทหรือยอดให้เลือก',
+    openingQuestion: 'หนูโทรมาเรื่องอะไรจ๊ะ'
+  };
+
   function loadAgents() {
     try {
       const saved = JSON.parse(localStorage.getItem(storageKey) ?? '[]');
-      if (!Array.isArray(saved)) return [];
-      const drafts = new Map();
+      if (!Array.isArray(saved)) return [ploy];
+      const drafts = new Map([[ploy.id, ploy]]);
       for (const entry of saved) {
         if (typeof entry?.id !== 'string' || !entry.id.trim()) continue;
         const draft = { ...emptyAgent };
@@ -55,7 +65,7 @@
       }
       return [...drafts.values()];
     } catch {
-      return [];
+      return [ploy];
     }
   }
 
@@ -66,28 +76,10 @@
   let agents = $state(loadAgents());
   let agent = $state({ ...emptyAgent });
   let page = $state('monitor');
-  let scenario = $state('message');
+  let scenario = $state('mule');
   let tried = $state(false);
   let feedback = $state('');
   let search = $state('');
-  let thaiVoices = $state.raw([]);
-  let voiceStatus = $state('');
-  const speech = window.speechSynthesis;
-  function refreshVoices() {
-    const voices = speech?.getVoices() ?? [];
-    thaiVoices = [...new Map(
-      voices.filter((voice) => voice.voiceURI && /^th(?:[-_]|$)/i.test(voice.lang))
-        .map((voice) => [voice.voiceURI, voice])
-    ).values()];
-  }
-  refreshVoices();
-  onMount(() => {
-    speech?.addEventListener('voiceschanged', refreshVoices);
-    return () => {
-      speech?.removeEventListener('voiceschanged', refreshVoices);
-      speech?.cancel();
-    };
-  });
   let previewTurns = $derived(scenario === 'mule' ? [
     { role: 'agent', text: [muleFollowUps[agent.tone], agent.openingQuestion.trim() || emptyAgent.openingQuestion].join(' ') },
     { role: 'caller', text: muleEvidence[0].quote },
@@ -97,29 +89,6 @@
     { role: 'caller', text: muleEvidence[2].quote }
   ] : [{ role: 'agent', text: scenarios[scenario].reply }]);
 
-  function speakPreview() {
-    refreshVoices();
-    const voice = agent.voiceURI
-      ? thaiVoices.find((item) => item.voiceURI === agent.voiceURI)
-      : thaiVoices[0];
-    if (!voice) {
-      voiceStatus = agent.voiceURI ? 'เสียงที่บันทึกไว้ไม่มีในอุปกรณ์นี้ กรุณาเลือกเสียงอีกครั้ง' : 'อุปกรณ์นี้ยังไม่มีเสียงสังเคราะห์ภาษาไทย';
-      return;
-    }
-    const lines = [agent.greeting, ...(tried ? previewTurns.filter(({ role }) => role === 'agent').map(({ text }) => text) : [])];
-    speech.cancel();
-    const utterance = new SpeechSynthesisUtterance(lines.filter(Boolean).join(' '));
-    utterance.lang = voice.lang;
-    utterance.voice = voice;
-    utterance.rate = agent.voiceRate;
-    utterance.pitch = agent.voicePitch;
-    voiceStatus = 'กำลังเล่นเสียงภาษาไทย';
-    utterance.onend = () => { voiceStatus = 'เล่นเสียงจบแล้ว'; };
-    utterance.onerror = ({ error }) => {
-      if (error !== 'canceled' && error !== 'interrupted') voiceStatus = 'เล่นเสียงภาษาไทยไม่สำเร็จ';
-    };
-    speech.speak(utterance);
-  }
   let connectFilter = $state('all');
   const dateFormat = new Intl.DateTimeFormat('th-TH', {
     year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit'
@@ -135,12 +104,10 @@
   ).sort((a, b) => (b.updatedAt ?? '').localeCompare(a.updatedAt ?? '')));
 
   function edit(saved = emptyAgent) {
-    speech?.cancel();
     agent = { ...emptyAgent, ...saved };
-    scenario = 'message';
+    scenario = 'mule';
     tried = false;
     feedback = '';
-    voiceStatus = '';
     page = 'editor';
   }
 
@@ -173,7 +140,6 @@
   }
 </script>
 
-<svelte:window onfocus={refreshVoices} />
 
 <div class="shell">
   <aside class="rail">
@@ -181,17 +147,20 @@
     <nav aria-label="เมนูหลัก">
       <button class={{ active: page === 'monitor' }} aria-current={page === 'monitor' ? 'page' : undefined} onclick={() => page = 'monitor'}><span class="nav-icon" aria-hidden="true">◈</span>ติดตาม Agents</button>
       <button class={{ active: page === 'editor' }} aria-current={page === 'editor' ? 'page' : undefined} onclick={() => edit()}><span class="nav-icon" aria-hidden="true">＋</span>สร้าง Agent</button>
+      <button class={{ active: page === 'history' }} onclick={() => page = 'history'}><span class="nav-icon" aria-hidden="true">☏</span>ประวัติสายฝึก</button>
       <button class={{ active: page === 'health' }} aria-current={page === 'health' ? 'page' : undefined} onclick={() => page = 'health'}><span class="nav-icon" aria-hidden="true">◉</span>สถานะระบบ</button>
     </nav>
   </aside>
 
-  {#if page === 'health'}
+  {#if page === 'history'}
+    <main class="content" lang="th"><PhoneHistory /></main>
+  {:else if page === 'health'}
     <div class="content system-health"><Health /></div>
   {:else if page === 'monitor'}
     <main class="content" lang="th">
       <div class="breadcrumb">Call Center <span aria-hidden="true">/</span> <strong>AI Agents</strong></div>
       <header class="page-title">
-        <div><h1>Agent Studio</h1><p>สร้างและติดตามผู้ช่วยรับสายภาษาไทย</p></div>
+        <div><h1>Agent Studio</h1><p>ฝึกรับมือสายหลอกลวงกับยายมะลิ และทบทวนสิ่งที่ผู้โทรกล่าวอ้าง</p></div>
         <button class="button primary" onclick={() => edit()}>＋ สร้าง Agent</button>
       </header>
 
@@ -252,7 +221,7 @@
     <main class="content" lang="th">
       <div class="breadcrumb">Call Center <span aria-hidden="true">/</span> <strong>AI Agents</strong></div>
       <header class="page-title">
-        <div><h1>{agent.id ? 'แก้ไข Agent' : 'สร้าง Agent'}</h1><p>ตั้งค่าผู้ช่วยรับสายภาษาไทยสำหรับ Amazon Connect</p></div>
+        <div><h1>{agent.id ? 'แก้ไข Agent' : 'สร้าง Agent'}</h1><p>ตั้งบุคลิกผู้รับสายสำหรับฝึกสนทนากับมิจฉาชีพจำลอง</p></div>
         <button class="button secondary" onclick={() => page = 'monitor'}>กลับไปรายชื่อ Agents</button>
       </header>
 
@@ -274,25 +243,10 @@
             <p class="muted">บุคลิกและเป้าหมายจะบันทึกในร่าง พรีวิวจะใช้คำถามแรกและน้ำเสียงที่เลือกกับบทจำลอง</p>
             <label>บุคลิกและบทบาท<textarea rows="2" maxlength="500" bind:value={agent.persona}></textarea></label>
             <label>ข้อมูลที่ต้องการเก็บ<textarea rows="2" maxlength="500" bind:value={agent.objective}></textarea></label>
-            <label>คำถามแรกในเดโม AI Mule<input maxlength="200" bind:value={agent.openingQuestion} /></label>
+            <label>คำถามแรกในเดโมสายอ้างค่าจัดส่ง<input maxlength="200" bind:value={agent.openingQuestion} /></label>
           </section>
 
-          <section class="card" aria-labelledby="voice">
-            <h2 id="voice">เสียงภาษาไทย</h2>
-            <label>เสียงสังเคราะห์จากอุปกรณ์<select bind:value={agent.voiceURI} onfocus={refreshVoices}>
-              <option value="">เสียงไทยอัตโนมัติ</option>
-              {#if agent.voiceURI && !thaiVoices.some((voice) => voice.voiceURI === agent.voiceURI)}
-                <option value={agent.voiceURI}>เสียงที่บันทึกไว้ (ไม่มีในอุปกรณ์นี้)</option>
-              {/if}
-              {#each thaiVoices as voice (voice.voiceURI)}
-                <option value={voice.voiceURI}>{voice.name}</option>
-              {/each}
-            </select></label>
-            <div class="fields">
-              <label>ความเร็ว {agent.voiceRate}×<input type="range" min="0.7" max="1.3" step="0.1" bind:value={agent.voiceRate} /></label>
-              <label>ระดับเสียงสูง–ต่ำ {agent.voicePitch}<input type="range" min="0.7" max="1.3" step="0.1" bind:value={agent.voicePitch} /></label>
-            </div>
-          </section>
+          <VoiceDemo {agent} />
 
           <section class="card" aria-labelledby="connect">
             <h2 id="connect">Amazon Connect Customer</h2>
@@ -306,7 +260,6 @@
             <p class="muted">ผูกเบอร์รับสายกับ Contact Flow ที่เผยแพร่ใน Amazon Connect</p>
             <a href="https://docs.aws.amazon.com/connect/latest/adminguide/associate-claimed-ported-phone-number-to-flow.html" target="_blank" rel="noreferrer">คู่มือการผูกเบอร์กับ Contact Flow ↗</a>
           </section>
-          <VoiceDemo {agent} />
           <div class="actions"><button class="button primary" type="submit">บันทึกร่าง</button><span role="status">{feedback}</span></div>
         </form>
 
@@ -333,9 +286,7 @@
           </select></label>
           <div class="preview-actions">
             <button class="button secondary" onclick={runPreview}>ลองบทสนทนา</button>
-            <button class="button secondary" onclick={speakPreview}>ฟังเสียงภาษาไทย</button>
           </div>
-          {#if voiceStatus}<p class="muted" role="status">{voiceStatus}</p>{/if}
           {#if tried && scenario === 'mule'}
             <section class="mule-summary" aria-labelledby="mule-summary">
               <h3 id="mule-summary">ข้อมูลที่ผู้โทรแจ้ง</h3>

@@ -2,16 +2,16 @@ package main
 
 import (
 	"bytes"
-	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
-	"mime/multipart"
+	"mime"
 	"net/http"
 	"os"
 	"path"
@@ -25,10 +25,20 @@ import (
 const callDuration = 3 * time.Minute
 const demoCallLimit = 25
 
+var errVoiceLimit = errors.New("demo call limit reached")
+
+type voiceReservation struct {
+	id    string
+	until time.Time
+	end   func() bool
+}
+
 func registerVoice(routes *http.ServeMux) {
 	key := os.Getenv("OPENAI_API_KEY")
 	code := os.Getenv("VOICE_DEMO_CODE")
 	client := &http.Client{Timeout: 8 * time.Second}
+	offerClient := &http.Client{Timeout: 20 * time.Second}
+	phoneURL := strings.TrimRight(os.Getenv("PHONE_HISTORY_URL"), "/")
 	authorized := func(r *http.Request) bool {
 		return code != "" && subtle.ConstantTimeCompare([]byte(r.Header.Get("X-Voice-Demo-Code")), []byte(code)) == 1
 	}
@@ -37,19 +47,58 @@ func registerVoice(routes *http.ServeMux) {
 		_, _ = io.WriteString(mac, id)
 		return hex.EncodeToString(mac.Sum(nil))
 	}
-	registerVoiceRecordings(routes, authorized, recordingToken)
+	callOwner := func(r *http.Request, id string) bool {
+		return code != "" && validVoiceCallID(id) && hmac.Equal([]byte(r.Header.Get("X-Voice-Recording-Token")), []byte(recordingToken(id)))
+	}
+	attachPhoneHistory := registerPhoneHistory(routes, authorized, callOwner)
+	registerVoiceSamples(routes, key)
+	registerVoiceRecordings(routes, callOwner)
 	var lock sync.Mutex
-	active := false
+	var active *voiceReservation
+	routes.HandleFunc("GET /api/v1/voice/status", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-store")
+		lock.Lock()
+		defer lock.Unlock()
+		count, err := voiceCallCount()
+		if err != nil || key == "" || code == "" || phoneURL == "" {
+			http.Error(w, "Voice demo unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{"busy": active != nil, "remaining": max(0, demoCallLimit-count)})
+	})
+	routes.HandleFunc("POST /api/v1/voice/calls/{id}/hangup", func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
+		if !callOwner(r, id) {
+			http.Error(w, "Invalid call access", http.StatusForbidden)
+			return
+		}
+		lock.Lock()
+		current := active
+		if current == nil || current.id != id {
+			lock.Unlock()
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		end := current.end
+		lock.Unlock()
+		if !end() {
+			http.Error(w, "Hangup pending", http.StatusBadGateway)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
 	routes.HandleFunc("POST /api/v1/voice/calls", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
-		if key == "" || code == "" {
+		if typ, _, err := mime.ParseMediaType(r.Header.Get("Content-Type")); err != nil || typ != "application/json" {
+			http.Error(w, "Expected JSON", http.StatusUnsupportedMediaType)
+			return
+		}
+		if key == "" || code == "" || phoneURL == "" {
 			http.Error(w, "Voice demo is unavailable", http.StatusServiceUnavailable)
 			return
 		}
-		if !authorized(r) {
-			http.Error(w, "Invalid demo access code", http.StatusUnauthorized)
-			return
-		}
+		_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(33 * time.Second))
 		var input struct {
 			SDP, Name, Persona, Objective, Greeting, Instructions, Question, Tone, Voice string
 		}
@@ -65,59 +114,57 @@ func registerVoice(routes *http.ServeMux) {
 			http.Error(w, "Unsupported voice", http.StatusBadRequest)
 			return
 		}
-		instructions := fmt.Sprintf(`คุณเป็นผู้ช่วย AI ในเดโมรับสายจำลอง พูดภาษาไทยและแจ้งว่าเป็น AI เปิดด้วยคำทักทายที่กำหนด ถามทีละข้อและกระชับ ถามต่อจากสิ่งที่ผู้โทรแจ้งเพื่อเก็บข้อมูลที่ใช้ตรวจสอบ เช่น ชื่อบริษัท ยอด และเลขอ้างอิง ห้ามขอรหัสผ่าน OTP หรือข้อมูลการเงินส่วนตัว ห้ามทำธุรกรรม
-ชื่อ: %s
-บุคลิก: %s
-น้ำเสียง: %s
-เป้าหมาย: %s
-คำทักทาย: %s
-คำถามแรก: %s
-คำสั่งเพิ่มเติม: %s`, input.Name, input.Persona, input.Tone, input.Objective, input.Greeting, input.Question, input.Instructions)
-		session, err := json.Marshal(map[string]any{
-			"type": "realtime", "model": "gpt-realtime-2.1-mini",
-			"instructions": instructions, "max_output_tokens": 400,
-			"audio": map[string]any{
-				"input":  map[string]any{"transcription": map[string]string{"model": "gpt-transcribe", "language": "th"}},
-				"output": map[string]string{"voice": input.Voice},
-			},
-		})
+		body, err := json.Marshal(input)
 		if err != nil {
-			http.Error(w, "Invalid session settings", http.StatusBadRequest)
+			http.Error(w, "Invalid call configuration", http.StatusBadRequest)
 			return
 		}
-		var body bytes.Buffer
-		form := multipart.NewWriter(&body)
-		if form.WriteField("sdp", input.SDP) != nil || form.WriteField("session", string(session)) != nil || form.Close() != nil {
-			http.Error(w, "Could not prepare call", http.StatusInternalServerError)
+		req, err := http.NewRequest(http.MethodPost, phoneURL+"/offer", bytes.NewReader(body))
+		if err != nil {
+			http.Error(w, "Invalid phone service configuration", http.StatusServiceUnavailable)
 			return
 		}
+		req.Header.Set("Content-Type", "application/json")
 		lock.Lock()
-		if active {
+		if active != nil {
+			seconds := max(1, int(time.Until(active.until).Seconds())+1)
+			w.Header().Set("Retry-After", strconv.Itoa(seconds))
 			lock.Unlock()
-			http.Error(w, "A demo call is already reserved", http.StatusTooManyRequests)
+			http.Error(w, "A demo call is already reserved", http.StatusConflict)
 			return
 		}
-		err = reserveVoiceCall()
+		reservation := &voiceReservation{until: time.Now().Add(callDuration)}
+		count, err := voiceCallCount()
 		if err == nil {
-			active = true
+			if count >= demoCallLimit {
+				err = errVoiceLimit
+			} else {
+				err = writeVoiceCallCount(count + 1)
+			}
+		}
+		if err == nil {
+			active = reservation
 		}
 		lock.Unlock()
 		if err != nil {
 			log.Printf("voice quota: %v", err)
-			http.Error(w, "Voice demo quota is unavailable or exhausted", http.StatusTooManyRequests)
+			if errors.Is(err, errVoiceLimit) {
+				http.Error(w, "Voice demo quota exhausted", http.StatusTooManyRequests)
+			} else {
+				http.Error(w, "Voice quota storage unavailable", http.StatusServiceUnavailable)
+			}
 			return
 		}
 		release := func() {
 			lock.Lock()
-			active = false
+			if active == reservation {
+				active = nil
+			}
 			lock.Unlock()
 		}
 		// Keep the upstream request alive if the browser leaves before receiving the SDP,
 		// so the server can still schedule closure for the created call.
-		req, _ := http.NewRequest(http.MethodPost, "https://api.openai.com/v1/realtime/calls", &body)
-		req.Header.Set("Authorization", "Bearer "+key)
-		req.Header.Set("Content-Type", form.FormDataContentType())
-		response, err := client.Do(req)
+		response, err := offerClient.Do(req)
 		if err != nil {
 			time.AfterFunc(callDuration, release)
 			http.Error(w, "OpenAI call request failed", http.StatusBadGateway)
@@ -125,7 +172,18 @@ func registerVoice(routes *http.ServeMux) {
 		}
 		defer response.Body.Close()
 		if response.StatusCode < 200 || response.StatusCode >= 300 {
-			release()
+			if response.StatusCode != http.StatusUnprocessableEntity {
+				// The upstream call may exist even if the internal service lost its response.
+				time.AfterFunc(callDuration, release)
+				http.Error(w, "Phone service unavailable", http.StatusBadGateway)
+				return
+			}
+			lock.Lock()
+			if err := writeVoiceCallCount(count); err != nil {
+				log.Print("Could not restore quota after rejected call")
+			}
+			active = nil
+			lock.Unlock()
 			log.Printf("OpenAI call creation: HTTP %d, request %s", response.StatusCode, response.Header.Get("X-Request-Id"))
 			http.Error(w, "OpenAI could not start this call", http.StatusBadGateway)
 			return
@@ -136,24 +194,44 @@ func registerVoice(routes *http.ServeMux) {
 			http.Error(w, "OpenAI call ID missing", http.StatusBadGateway)
 			return
 		}
+		var ending sync.Mutex
+		ended := false
+		end := func() bool {
+			ending.Lock()
+			defer ending.Unlock()
+			if ended {
+				return true
+			}
+			req, _ := http.NewRequest(http.MethodPost,
+				"https://api.openai.com/v1/realtime/calls/"+id+"/hangup", nil)
+			req.Header.Set("Authorization", "Bearer "+key)
+			resp, err := client.Do(req)
+			if err != nil {
+				return false
+			}
+			defer resp.Body.Close()
+			if resp.StatusCode >= 300 && resp.StatusCode != http.StatusNotFound {
+				return false
+			}
+			ended = true
+			release()
+			return true
+		}
+		lock.Lock()
+		reservation.id, reservation.end, reservation.until = id, end, time.Now().Add(callDuration)
+		lock.Unlock()
 		time.AfterFunc(callDuration, func() {
-			defer release()
 			for attempt := 0; attempt < 3; attempt++ {
-				req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost,
-					"https://api.openai.com/v1/realtime/calls/"+id+"/hangup", nil)
-				req.Header.Set("Authorization", "Bearer "+key)
-				response, err := client.Do(req)
-				if err == nil {
-					response.Body.Close()
-					if response.StatusCode < 300 || response.StatusCode == http.StatusNotFound {
-						return
-					}
+				if end() {
+					return
 				}
 				time.Sleep(time.Second)
 			}
 			log.Print("OpenAI call cleanup did not confirm hangup")
+			release()
 		})
 		w.Header().Set("Content-Type", "application/sdp")
+		w.Header().Set("X-Phone-History", strconv.FormatBool(attachPhoneHistory(id)))
 		w.Header().Set("X-Voice-Call-ID", id)
 		w.Header().Set("X-Voice-Recording-Token", recordingToken(id))
 		_, _ = io.Copy(w, io.LimitReader(response.Body, 32<<10))
@@ -161,25 +239,27 @@ func registerVoice(routes *http.ServeMux) {
 }
 
 // This stack runs one API replica. Persist reservations on its durable volume.
-func reserveVoiceCall() error {
-	const file = "/var/lib/wirachit/voice-call-count"
-	value, err := os.ReadFile(file)
+const voiceCountFile = "/var/lib/wirachit/voice-call-count"
+
+func voiceCallCount() (int, error) {
+	value, err := os.ReadFile(voiceCountFile)
 	count := 0
 	if err == nil {
 		count, err = strconv.Atoi(string(value))
 		if err != nil || count < 0 {
-			return fmt.Errorf("invalid voice call count")
+			return 0, fmt.Errorf("invalid voice call count")
 		}
 	} else if !os.IsNotExist(err) {
+		return 0, err
+	}
+	return count, nil
+}
+
+func writeVoiceCallCount(count int) error {
+	if err := os.WriteFile(voiceCountFile+".next", []byte(strconv.Itoa(count)), 0600); err != nil {
 		return err
 	}
-	if count >= demoCallLimit {
-		return fmt.Errorf("demo call limit reached")
-	}
-	if err := os.WriteFile(file+".next", []byte(strconv.Itoa(count+1)), 0600); err != nil {
-		return err
-	}
-	return os.Rename(file+".next", file)
+	return os.Rename(voiceCountFile+".next", voiceCountFile)
 }
 
 func validVoiceCallID(id string) bool {
@@ -194,13 +274,12 @@ func validVoiceCallID(id string) bool {
 	return true
 }
 
-func registerVoiceRecordings(routes *http.ServeMux, authorized func(*http.Request) bool, token func(string) string) {
+func registerVoiceRecordings(routes *http.ServeMux, callOwner func(*http.Request, string) bool) {
 	const dir = "/var/lib/wirachit"
 	routes.HandleFunc("/api/v1/voice/recordings/{id}", func(w http.ResponseWriter, r *http.Request) {
 		id := r.PathValue("id")
 		w.Header().Set("Cache-Control", "no-store")
-		if !authorized(r) || !validVoiceCallID(id) ||
-			!hmac.Equal([]byte(r.Header.Get("X-Voice-Recording-Token")), []byte(token(id))) {
+		if !callOwner(r, id) {
 			http.Error(w, "Invalid recording access", http.StatusUnauthorized)
 			return
 		}
