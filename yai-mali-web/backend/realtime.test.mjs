@@ -59,7 +59,7 @@ describe('start', () => {
     assert.equal(init.body.get('sdp'), OFFER);
     const session = JSON.parse(init.body.get('session'));
     assert.equal(session.type, 'realtime');
-    assert.equal(session.model, 'gpt-realtime-2.1-mini');
+    assert.equal(session.model, 'gpt-realtime-2.1');
     assert.equal(session.max_output_tokens, 400);
     assert.equal(session.audio.output.voice, 'marin');
     assert.match(session.instructions, /Yai Mali/);
