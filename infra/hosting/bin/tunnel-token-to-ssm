@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# Copies the Cloudflare Tunnel run token into SSM SecureString /<project>/tunnel-token.
+# The token never appears in argv, output, or tofu state. Run after the first apply in tunnel mode.
+set -euo pipefail
+# shellcheck source=bin/_lib.sh
+. "$(dirname "$0")/_lib.sh"
+
+project="$(out project)"
+region="$(out region)"
+fetch_tunnel_token "$tmp/token"
+
+jq -n --arg name "/$project/tunnel-token" --rawfile value "$tmp/token" \
+  '{Name: $name, Value: $value, Type: "SecureString", Overwrite: true}' > "$tmp/request.json"
+version="$(aws ssm put-parameter --region "$region" --cli-input-json "file://$tmp/request.json" \
+  --query Version --output text)"
+echo "stored /$project/tunnel-token (version $version)"
