@@ -1,17 +1,35 @@
 <script>
+  import { onMount } from 'svelte';
   import { tabCalls } from './callHistory.js';
 
-  const rows = tabCalls();
+  let { localPhoneDemo = false } = $props();
+  let rows = $state([]);
   let record = $state(null);
   let status = $state('');
   let loading = $state(false);
+
+  onMount(async () => {
+    if (!localPhoneDemo) {
+      rows = tabCalls();
+      return;
+    }
+    loading = true;
+    try {
+      const response = await fetch('/api/history', { cache: 'no-store' });
+      if (!response.ok) throw new Error();
+      rows = (await response.json()).filter((row) => row.source !== 'fixture');
+    } catch {
+      status = 'อ่านประวัติจากเซิร์ฟเวอร์ Infra-Phone ไม่สำเร็จ';
+    } finally { loading = false; }
+  });
 
   async function browse(contactId, token) {
     loading = true;
     record = null;
     status = '';
     try {
-      const res = await fetch('/api/v1/phone/history/' + encodeURIComponent(contactId), {
+      const base = localPhoneDemo ? '/api/history/' : '/api/v1/phone/history/';
+      const res = await fetch(base + encodeURIComponent(contactId), {
         headers: token ? { 'X-Voice-Recording-Token': token } : {}
       });
       if (!res.ok) throw new Error(res.status === 404 ? 'ยังไม่พบประวัติสายนี้' : 'อ่านประวัติสายไม่สำเร็จ');
@@ -27,7 +45,7 @@
 
 <header class="page-title"><div><h1>ประวัติสายฝึก</h1><p>ทบทวนข้ออ้างของผู้โทรและคำถามของ Agent</p></div></header>
 <section class="card">
-  <h2>สายที่ฝึกในแท็บนี้</h2>
+  <h2>{localPhoneDemo ? 'สายที่บันทึกไว้' : 'สายที่ฝึกในแท็บนี้'}</h2>
   {#if rows.length}
     <ul>{#each rows as row (row.contactId)}
       <li><button class="agent-link" disabled={loading} onclick={() => browse(row.contactId, row.token)}>
@@ -35,7 +53,7 @@
       </button></li>
     {/each}</ul>
   {:else}
-    <p>เมื่อจบสายที่ฝึกในแท็บนี้ คุณจะเปิดอ่านบทสนทนาได้ที่นี่</p>
+    <p>{localPhoneDemo ? 'เมื่อวางสาย ประวัติจะปรากฏที่นี่' : 'เมื่อจบสายที่ฝึกในแท็บนี้ คุณจะเปิดอ่านบทสนทนาได้ที่นี่'}</p>
   {/if}
   <button type="button" class="button secondary" disabled={loading} onclick={() => browse('demo-otp-request')}>ดูตัวอย่างประวัติสาย</button>
   <p role="status">{loading ? 'กำลังโหลด…' : status}</p>

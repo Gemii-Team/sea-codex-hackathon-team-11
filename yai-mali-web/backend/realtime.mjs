@@ -19,7 +19,7 @@ import path from 'node:path';
 import { voiceInstructions } from './persona.mjs';
 
 export const OPENAI_BASE = 'https://api.openai.com';
-export const MODEL = 'gpt-realtime-2.1-mini';
+export const MODEL = 'gpt-realtime-2.1';
 export const VOICE = 'marin';
 export const MAX_CALL_MS = 3 * 60 * 1000;
 export const CALL_LIMIT = 25;

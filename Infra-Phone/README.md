@@ -29,13 +29,25 @@ The default history store uses the persistent phone-history volume. To use the C
    node --env-file=.env Infra-Phone/demo/server.mjs
    ```
 
-3. Open [localhost:8783](http://localhost:8783/), enter an optional display name, and start a call with the microphone. Use a simulated conversation and allow the bot to respond before hanging up. Open the saved record and verify both speakers.
+3. Open [localhost:8783](http://localhost:8783/), enter an optional display name, and start a call with the microphone. Use **ปิดไมค์** to mute your microphone while listening to Yai Mali, and **เปิดไมค์** when you want to speak. Use a simulated conversation and open the saved record after hanging up to verify both speakers.
+
+### Run through Agent Studio locally
+
+Keep the Infra-Phone server running on port 8783. In a second terminal, start the main-branch frontend.
+
+```bash
+cd frontend
+bun install --frozen-lockfile
+bun run dev --host 127.0.0.1 --port 5173
+```
+
+Open [Agent Studio](http://127.0.0.1:5173/?agent=infra-phone-ploy). **โทรหายายมะลิ** opens the phone demo inside Studio, and **ประวัติสายฝึก** reads the same call history. The local proxy is restricted to loopback and forwards these requests to the Infra-Phone server. The hosted Studio continues to use its team-authenticated voice API.
 
 S3 records use `v1/conversations/<contactId>.json` and the [v1 JSON Schema](contracts/conversations/v1/conversation.schema.json). Each record identifies its source as `openai_realtime`, `connect`, or `fixture`. The app stores text with digit sequences and email addresses masked. If a reply is interrupted, its transcript may be partial. The fixture includes a summary. Live calls start with `summaryStatus` set to `unavailable`, ready for a later summary processor.
 
 ### Review caller evidence
 
-Ploy is a fictional character and uses the test reference `DEMO-PLOY-001` when a reference is needed. For test calls where the caller states a destination account, callback number, reference, or link, the app extracts recognized values from the caller transcript. Review each value alongside its turn ID. The values are caller statements and should be checked against the original interaction before sharing.
+The local test calls use the fictional character Yai Mali. For calls where the caller states a destination account, callback number, reference, or link, the app extracts recognized values from the caller transcript. Review each value alongside its turn ID. The values are caller statements and should be checked against the original interaction before sharing.
 
 Select **เปิดหลักฐานฉบับเต็ม** and enter the local review key from `Infra-Phone/demo/.history/evidence-key`. The app generates that file at first start. Evidence for new calls uses `v1/evidence/<contactId>.json` in the same private bucket or the `evidence/` directory in local storage. The history record contains the count and masked text. Older history records already have masking applied. AWS principals with bucket read permission can access the evidence objects according to their IAM policies. The web review key applies to the localhost app.
 
