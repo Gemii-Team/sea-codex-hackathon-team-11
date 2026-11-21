@@ -50,6 +50,8 @@ h1 { font-size: clamp(1.9rem, 4vw, 2.6rem); line-height: 1.24; letter-spacing: -
 .call-button { width: 100%; margin-top: 14px; min-height: 46px; border: 0; border-radius: 10px; color: #102b46; background: #a7e9e1; font-weight: 750; }
 .call-button:hover:not(:disabled) { background: #caeee8; }
 .call-button:disabled { opacity: .58; }
+.call-button.mute { background: #d9eaf0; }
+.call-button.mute[data-muted="true"] { background: #ffe3a7; }
 .call-button.hangup { background: #ffcbc7; color: #6a2623; }
 #call-status { margin-top: 12px; min-height: 2.8em; font-size: .86rem; color: #c5ddea; overflow-wrap: anywhere; }
 .history { background: #fff; border: 1px solid var(--border); border-radius: 20px; min-height: 414px; overflow: hidden; }
