@@ -10,7 +10,7 @@ die() {
   exit 1
 }
 
-[ -f "$env_file" ] || die ".env not found at $env_file (set ENV_FILE to use another path)"
+[ -f "$env_file" ] || die ".env not found at $env_file (set ENV_FILE to use another path or /dev/null for exported credentials)"
 set -a
 # shellcheck disable=SC1090
 . "$env_file"
@@ -28,6 +28,10 @@ trap 'rm -rf "$tmp"' EXIT
 
 # out <name>: one tofu output as a raw string ("" when null).
 out() {
+  if [ -n "${HOSTING_OUTPUTS_FILE:-}" ]; then
+    jq -er --arg k "$1" '.[$k] | select(type == "string" or type == "number")' "$HOSTING_OUTPUTS_FILE"
+    return
+  fi
   [ -f "$tmp/outputs.json" ] || tofu -chdir="$root" output -json > "$tmp/outputs.json"
   jq -r --arg k "$1" '.[$k].value // ""' "$tmp/outputs.json"
 }

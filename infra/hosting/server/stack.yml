@@ -1,0 +1,13 @@
+services:
+  api:
+    image: ${API_IMAGE:?API_IMAGE is required}
+    environment:
+      API_ADDR: ":8080"
+      MONITOR_URL: http://monitor:8081
+    restart: unless-stopped
+  monitor:
+    image: ${MONITOR_IMAGE:?MONITOR_IMAGE is required}
+    environment:
+      MONITOR_ADDR: ":8081"
+      API_HEALTH_URL: http://api:8080/healthz
+    restart: unless-stopped

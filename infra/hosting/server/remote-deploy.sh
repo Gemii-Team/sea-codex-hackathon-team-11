@@ -5,6 +5,7 @@
 set -euo pipefail
 
 image=$1 mode=$2 app_port=$3 fqdn=$4 region=$5 project=$6
+api_image=${7:-} monitor_image=${8:-}
 
 cloud-init status --wait >/dev/null || {
   echo "first-boot setup failed; see /var/log/cloud-init-output.log" >&2
@@ -15,6 +16,9 @@ cd /opt/app
 umask 077
 
 printf 'IMAGE=%s\nAPP_PORT=%s\nFQDN=%s\nCOMPOSE_PROFILES=%s\n' "$image" "$app_port" "$fqdn" "$mode" > .env
+if [ -n "$api_image" ]; then
+  printf 'COMPOSE_FILE=compose.yml:stack.yml\nAPI_IMAGE=%s\nMONITOR_IMAGE=%s\n' "$api_image" "$monitor_image" >> .env
+fi
 export COMPOSE_PROFILES=$mode
 
 : > tunnel.env
@@ -44,4 +48,3 @@ fi
 docker compose pull --quiet
 docker compose up -d --remove-orphans --wait --wait-timeout 180
 docker compose ps --format 'table {{.Service}}\t{{.Image}}\t{{.Status}}'
-docker image prune -f >/dev/null

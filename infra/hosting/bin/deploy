@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Usage: bin/deploy <build-context-dir>
+# Usage: bin/deploy <build-context-dir> [--stack]
 # Builds a linux/arm64 image, pushes it to ECR, then restarts the compose stack on the server via SSM.
 # Only non-secret values travel in the SSM command; the server fetches secrets itself.
 set -euo pipefail
@@ -8,6 +8,10 @@ set -euo pipefail
 
 ctx="${1:?usage: bin/deploy <build-context-dir>}"
 [ -f "$ctx/Dockerfile" ] || die "$ctx/Dockerfile not found"
+stack="${2:-}"
+case "$stack" in "" | --stack) ;; *) die "expected --stack";; esac
+[ "$#" -le 2 ] || die "too many arguments"
+repo_root="$root/../.."
 
 project="$(out project)"
 region="$(out region)"
@@ -18,13 +22,27 @@ fqdn="$(out fqdn)"
 app_port="$(out app_port)"
 [ -n "$instance_id" ] || die "no instance in tofu outputs; run bin/tf apply first"
 
-tag="$(date -u +%Y%m%d%H%M%S)-$(git -C "$ctx" rev-parse --short HEAD 2>/dev/null || echo nogit)"
+tag="${DEPLOY_TAG:-$(date -u +%Y%m%d%H%M%S)-$(git -C "$ctx" rev-parse --short HEAD 2>/dev/null || echo nogit)}"
+[[ "$repo" =~ ^[a-z0-9./_-]+$ && "$tag" =~ ^[A-Za-z0-9_.-]+$ &&
+   "$fqdn" =~ ^[a-zA-Z0-9.-]+$ && "$region" =~ ^[a-z0-9-]+$ &&
+   "$project" =~ ^[a-zA-Z0-9_-]+$ && "$app_port" =~ ^[0-9]+$ &&
+   ( "$mode" = tunnel || "$mode" = public ) ]] || die "invalid deploy configuration"
 image="$repo:$tag"
 
 echo "==> build + push $image"
 aws ecr get-login-password --region "$region" |
   docker login --username AWS --password-stdin "${repo%%/*}" >/dev/null
 docker buildx build --platform linux/arm64 --provenance=false -t "$image" --push "$ctx"
+api_image=""
+monitor_image=""
+if [ "$stack" = --stack ]; then
+  for service in api monitor; do
+    docker buildx build --platform linux/arm64 --provenance=false \
+      --build-arg "SERVICE=$service" -t "$image-$service" --push "$repo_root"
+  done
+  api_image="$image-api"
+  monitor_image="$image-monitor"
+fi
 
 echo "==> wait for the server to be reachable through SSM"
 for _ in $(seq 1 60); do
@@ -42,7 +60,8 @@ cd /opt/app
 echo '$(b64 "$root/server/compose.yml")' | base64 -d > compose.yml
 echo '$(b64 "$root/server/Caddyfile")' | base64 -d > Caddyfile
 echo '$(b64 "$root/server/remote-deploy.sh")' | base64 -d > remote-deploy.sh
-bash remote-deploy.sh '$image' '$mode' '$app_port' '$fqdn' '$region' '$project'"
+echo '$(b64 "$root/server/stack.yml")' | base64 -d > stack.yml
+bash remote-deploy.sh '$image' '$mode' '$app_port' '$fqdn' '$region' '$project' '$api_image' '$monitor_image'"
 jq -n --arg c "$script" '{commands: [$c], executionTimeout: ["900"]}' > "$tmp/params.json"
 
 echo "==> deploy on $instance_id (ingress_mode=$mode)"
@@ -64,14 +83,15 @@ aws ssm get-command-invocation --region "$region" --command-id "$cmd_id" --insta
 [ "$status" = Success ] || die "deploy command $cmd_id finished with status $status"
 
 echo "==> check https://$fqdn/"
-code=000
 for _ in $(seq 1 30); do
   code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 "https://$fqdn/" || true)"
-  case "$code" in 2?? | 3??)
-    echo "https://$fqdn/ -> HTTP $code ($image)"
+  if [[ "$code" == 2?? ]] && {
+    [ "$stack" != --stack ] ||
+      curl -fsS --max-time 10 "https://$fqdn/api/v1/status" | jq -e '.available == true' >/dev/null
+  }; then
+    echo "https://$fqdn/ passed smoke checks ($image)"
     exit 0
-    ;;
-  esac
+  fi
   sleep 5
 done
-die "https://$fqdn/ did not answer 2xx/3xx (last: HTTP $code)"
+die "https://$fqdn/ failed smoke checks (last homepage response: HTTP $code)"

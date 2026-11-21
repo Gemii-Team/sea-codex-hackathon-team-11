@@ -12,3 +12,7 @@
 *.tfvars
 *.tfvars.json
 crash.log
+
+# Frontend build artifacts
+node_modules/
+dist/
