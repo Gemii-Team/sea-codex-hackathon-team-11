@@ -1,4 +1,5 @@
-import { mount } from 'svelte';
+import { flushSync, mount } from 'svelte';
 import App from './App.svelte';
 
-mount(App, { target: document.getElementById('app') });
+flushSync(() => mount(App, { target: document.getElementById('app') }));
+document.getElementById('startup').remove();
