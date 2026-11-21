@@ -37,6 +37,7 @@ func registerVoice(routes *http.ServeMux) {
 		_, _ = io.WriteString(mac, id)
 		return hex.EncodeToString(mac.Sum(nil))
 	}
+	registerVoiceSamples(routes, key)
 	registerVoiceRecordings(routes, authorized, recordingToken)
 	var lock sync.Mutex
 	active := false

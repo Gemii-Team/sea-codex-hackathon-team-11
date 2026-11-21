@@ -1,5 +1,4 @@
 <script>
-  import { onMount } from 'svelte';
   import Health from './Health.svelte';
   import VoiceDemo from './VoiceDemo.svelte';
   import './portal.css';
@@ -70,24 +69,6 @@
   let tried = $state(false);
   let feedback = $state('');
   let search = $state('');
-  let thaiVoices = $state.raw([]);
-  let voiceStatus = $state('');
-  const speech = window.speechSynthesis;
-  function refreshVoices() {
-    const voices = speech?.getVoices() ?? [];
-    thaiVoices = [...new Map(
-      voices.filter((voice) => voice.voiceURI && /^th(?:[-_]|$)/i.test(voice.lang))
-        .map((voice) => [voice.voiceURI, voice])
-    ).values()];
-  }
-  refreshVoices();
-  onMount(() => {
-    speech?.addEventListener('voiceschanged', refreshVoices);
-    return () => {
-      speech?.removeEventListener('voiceschanged', refreshVoices);
-      speech?.cancel();
-    };
-  });
   let previewTurns = $derived(scenario === 'mule' ? [
     { role: 'agent', text: [muleFollowUps[agent.tone], agent.openingQuestion.trim() || emptyAgent.openingQuestion].join(' ') },
     { role: 'caller', text: muleEvidence[0].quote },
@@ -97,29 +78,6 @@
     { role: 'caller', text: muleEvidence[2].quote }
   ] : [{ role: 'agent', text: scenarios[scenario].reply }]);
 
-  function speakPreview() {
-    refreshVoices();
-    const voice = agent.voiceURI
-      ? thaiVoices.find((item) => item.voiceURI === agent.voiceURI)
-      : thaiVoices[0];
-    if (!voice) {
-      voiceStatus = agent.voiceURI ? 'เสียงที่บันทึกไว้ไม่มีในอุปกรณ์นี้ กรุณาเลือกเสียงอีกครั้ง' : 'อุปกรณ์นี้ยังไม่มีเสียงสังเคราะห์ภาษาไทย';
-      return;
-    }
-    const lines = [agent.greeting, ...(tried ? previewTurns.filter(({ role }) => role === 'agent').map(({ text }) => text) : [])];
-    speech.cancel();
-    const utterance = new SpeechSynthesisUtterance(lines.filter(Boolean).join(' '));
-    utterance.lang = voice.lang;
-    utterance.voice = voice;
-    utterance.rate = agent.voiceRate;
-    utterance.pitch = agent.voicePitch;
-    voiceStatus = 'กำลังเล่นเสียงภาษาไทย';
-    utterance.onend = () => { voiceStatus = 'เล่นเสียงจบแล้ว'; };
-    utterance.onerror = ({ error }) => {
-      if (error !== 'canceled' && error !== 'interrupted') voiceStatus = 'เล่นเสียงภาษาไทยไม่สำเร็จ';
-    };
-    speech.speak(utterance);
-  }
   let connectFilter = $state('all');
   const dateFormat = new Intl.DateTimeFormat('th-TH', {
     year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit'
@@ -135,12 +93,10 @@
   ).sort((a, b) => (b.updatedAt ?? '').localeCompare(a.updatedAt ?? '')));
 
   function edit(saved = emptyAgent) {
-    speech?.cancel();
     agent = { ...emptyAgent, ...saved };
     scenario = 'message';
     tried = false;
     feedback = '';
-    voiceStatus = '';
     page = 'editor';
   }
 
@@ -173,7 +129,6 @@
   }
 </script>
 
-<svelte:window onfocus={refreshVoices} />
 
 <div class="shell">
   <aside class="rail">
@@ -277,22 +232,7 @@
             <label>คำถามแรกในเดโม AI Mule<input maxlength="200" bind:value={agent.openingQuestion} /></label>
           </section>
 
-          <section class="card" aria-labelledby="voice">
-            <h2 id="voice">เสียงภาษาไทย</h2>
-            <label>เสียงสังเคราะห์จากอุปกรณ์<select bind:value={agent.voiceURI} onfocus={refreshVoices}>
-              <option value="">เสียงไทยอัตโนมัติ</option>
-              {#if agent.voiceURI && !thaiVoices.some((voice) => voice.voiceURI === agent.voiceURI)}
-                <option value={agent.voiceURI}>เสียงที่บันทึกไว้ (ไม่มีในอุปกรณ์นี้)</option>
-              {/if}
-              {#each thaiVoices as voice (voice.voiceURI)}
-                <option value={voice.voiceURI}>{voice.name}</option>
-              {/each}
-            </select></label>
-            <div class="fields">
-              <label>ความเร็ว {agent.voiceRate}×<input type="range" min="0.7" max="1.3" step="0.1" bind:value={agent.voiceRate} /></label>
-              <label>ระดับเสียงสูง–ต่ำ {agent.voicePitch}<input type="range" min="0.7" max="1.3" step="0.1" bind:value={agent.voicePitch} /></label>
-            </div>
-          </section>
+          <VoiceDemo {agent} />
 
           <section class="card" aria-labelledby="connect">
             <h2 id="connect">Amazon Connect Customer</h2>
@@ -306,7 +246,6 @@
             <p class="muted">ผูกเบอร์รับสายกับ Contact Flow ที่เผยแพร่ใน Amazon Connect</p>
             <a href="https://docs.aws.amazon.com/connect/latest/adminguide/associate-claimed-ported-phone-number-to-flow.html" target="_blank" rel="noreferrer">คู่มือการผูกเบอร์กับ Contact Flow ↗</a>
           </section>
-          <VoiceDemo {agent} />
           <div class="actions"><button class="button primary" type="submit">บันทึกร่าง</button><span role="status">{feedback}</span></div>
         </form>
 
@@ -333,9 +272,7 @@
           </select></label>
           <div class="preview-actions">
             <button class="button secondary" onclick={runPreview}>ลองบทสนทนา</button>
-            <button class="button secondary" onclick={speakPreview}>ฟังเสียงภาษาไทย</button>
           </div>
-          {#if voiceStatus}<p class="muted" role="status">{voiceStatus}</p>{/if}
           {#if tried && scenario === 'mule'}
             <section class="mule-summary" aria-labelledby="mule-summary">
               <h3 id="mule-summary">ข้อมูลที่ผู้โทรแจ้ง</h3>
