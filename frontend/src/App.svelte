@@ -1,11 +1,14 @@
 <script>
   import { planPloyTurn, ployGreeting, ployId } from './ploy.js';
+  import LocalPhoneDemo from './LocalPhoneDemo.svelte';
   import PhoneHistory from './PhoneHistory.svelte';
   import Health from './Health.svelte';
   import VoiceDemo from './VoiceDemo.svelte';
   import './portal.css';
 
   const storageKey = 'wirachit.voice-agents.v1';
+  const useLocalPhoneDemo = import.meta.env.DEV;
+  const phoneTitle = useLocalPhoneDemo ? 'โทรหายายมะลิ' : 'โทรหาป้าพลอย';
   const scenarios = {
     promptpay: { label: 'สายขอพร้อมเพย์เพื่อคืนเงิน', caller: 'ผมจะคืนค่าจัดส่งครับ ขอพร้อมเพย์คุณยายหน่อยครับ', reply: 'อ๋อ จะคืนค่าส่งเหรอจ๊ะ ของยายผูกกับมือถือ ยายจำได้แต่ท้ายสอง เจ็ด สี่ สองจ้ะ' },
     message: { label: 'ฝากข้อความ', caller: 'ขอฝากข้อความให้ติดต่อกลับได้ไหมครับ', reply: 'ได้เลยค่ะ ขอทราบชื่อของคุณก่อนนะคะ' },
@@ -150,7 +153,7 @@
   <aside class="rail">
     <a class="brand" href="./"><img class="mark" src="/mali/logo.png" alt="" width="42" height="42"><span>Yai Mali<small>ยายมะลิ · Agent Studio</small></span></a>
     <nav aria-label="เมนูหลัก">
-      <button class={{ active: page === 'call' }} aria-current={page === 'call' ? 'page' : undefined} onclick={() => page = 'call'}><span class="nav-icon" aria-hidden="true">☏</span>โทรหาป้าพลอย</button>
+      <button class={{ active: page === 'call' }} aria-current={page === 'call' ? 'page' : undefined} onclick={() => page = 'call'}><span class="nav-icon" aria-hidden="true">☏</span>{phoneTitle}</button>
       <button class={{ active: page === 'monitor' }} aria-current={page === 'monitor' ? 'page' : undefined} onclick={() => page = 'monitor'}><span class="nav-icon" aria-hidden="true">◈</span>ติดตาม Agents</button>
       <button class={{ active: page === 'editor' }} aria-current={page === 'editor' ? 'page' : undefined} onclick={() => edit()}><span class="nav-icon" aria-hidden="true">＋</span>สร้าง Agent</button>
       <button class={{ active: page === 'history' }} onclick={() => page = 'history'}><span class="nav-icon" aria-hidden="true">☏</span>ประวัติสายฝึก</button>
@@ -161,18 +164,22 @@
   {#if page === 'call'}
     <main class="content" lang="th">
       <div class="breadcrumb"><a href="./">Agent Studio</a> / สายฝึกภาษาไทย</div>
-      <header class="page-title"><div><h1>โทรหาป้าพลอย</h1><p>คุณเล่นเป็นผู้โทร พลอยรับสายและจดข้ออ้างไว้ตรวจสอบ</p></div></header>
-      <div class="call-layout">
-        <VoiceDemo agent={callAgent} dedicated onNotebook={(note) => notebook = note} />
-        <aside class="card notebook"><h2>สมุดบันทึกของพลอย</h2>
-          {#if notebook?.text}<p class="voice-summary">{notebook.text}</p>
-          {:else}<p class="muted">หลังวางสาย ข้ออ้างที่ได้ยินจากผู้โทรจะปรากฏที่นี่</p>{/if}
-          <button class="agent-link" onclick={() => page = 'history'}>เปิดประวัติสายฝึก</button>
-        </aside>
-      </div>
+      <header class="page-title"><div><h1>{phoneTitle}</h1><p>{useLocalPhoneDemo ? 'คุยกับตัวละคร AI · สายทดสอบนี้มีการถอดเสียง' : 'คุณเล่นเป็นผู้โทร พลอยรับสายและจดข้ออ้างไว้ตรวจสอบ'}</p></div></header>
+      {#if useLocalPhoneDemo}
+        <LocalPhoneDemo />
+      {:else}
+        <div class="call-layout">
+          <VoiceDemo agent={callAgent} dedicated onNotebook={(note) => notebook = note} />
+          <aside class="card notebook"><h2>สมุดบันทึกของพลอย</h2>
+            {#if notebook?.text}<p class="voice-summary">{notebook.text}</p>
+            {:else}<p class="muted">หลังวางสาย ข้ออ้างที่ได้ยินจากผู้โทรจะปรากฏที่นี่</p>{/if}
+            <button class="agent-link" onclick={() => page = 'history'}>เปิดประวัติสายฝึก</button>
+          </aside>
+        </div>
+      {/if}
     </main>
   {:else if page === 'history'}
-    <main class="content" lang="th"><PhoneHistory /></main>
+    <main class="content" lang="th"><PhoneHistory localPhoneDemo={useLocalPhoneDemo} /></main>
   {:else if page === 'health'}
     <div class="content system-health"><Health /></div>
   {:else if page === 'monitor'}
@@ -184,7 +191,7 @@
       </header>
 
       <section class="practice-hero">
-        <div><h2>ลองโทรหาป้าพลอย</h2><p>เล่นเป็นผู้โทรที่อ้างว่ามีค่าจัดส่งค้างอยู่ แล้วดูว่าพลอยจดอะไรได้บ้าง</p>
+        <div><h2>ลอง{phoneTitle}</h2><p>เล่นเป็นผู้โทรที่อ้างว่ามีค่าจัดส่งค้างอยู่ แล้วดูบทสนทนา</p>
         <a class="button primary" href="?agent=infra-phone-ploy">เข้าสายฝึก</a></div>
         <img src="/mali/mascot.png" alt="" width="184" height="168">
       </section>

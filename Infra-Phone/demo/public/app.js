@@ -1,5 +1,5 @@
 const elements = Object.fromEntries([
-  'storage', 'contact-name', 'start', 'finish', 'call-status', 'remote', 'refresh',
+  'storage', 'contact-name', 'start', 'mute', 'finish', 'call-status', 'remote', 'refresh',
   'history-status', 'history-list', 'detail', 'evidence-dialog', 'evidence-close',
   'evidence-form', 'evidence-key', 'evidence-submit', 'evidence-status', 'evidence-list',
 ].map((id) => [id, document.getElementById(id)]));
@@ -87,7 +87,7 @@ function showRecord(record) {
   const turns = make('ol', null, 'turns');
   for (const turn of record.turns) {
     const item = make('li', null, 'turn ' + turn.speaker);
-    item.append(make('span', turn.speaker === 'caller' ? 'ผู้โทร' : 'พลอย', 'speaker'), make('p', turn.text));
+    item.append(make('span', turn.speaker === 'caller' ? 'ผู้โทร' : 'ผู้ช่วย', 'speaker'), make('p', turn.text));
     turns.append(item);
   }
   elements.detail.replaceChildren(header, summary, turns);
@@ -148,11 +148,23 @@ function releaseMedia(call) {
   call.mic?.getTracks().forEach((track) => track.stop());
   call.peer?.close();
   elements.remote.srcObject = null;
+  elements.mute.hidden = true;
   card.dataset.active = 'false';
+}
+
+function updateMicrophoneControls(call) {
+  elements.mute.textContent = call.muted ? 'เปิดไมค์' : 'ปิดไมค์';
+  elements.mute.dataset.muted = String(Boolean(call.muted));
+  if (call.connected) {
+    elements['call-status'].textContent = call.muted
+      ? 'ปิดไมค์อยู่ · ยังฟังเสียงยายมะลิได้'
+      : 'กำลังสนทนา · พูดผ่านไมโครโฟนได้เลย';
+  }
 }
 
 function resetCall() {
   active = null;
+  elements.mute.disabled = false;
   elements.finish.hidden = true;
   elements.finish.disabled = false;
   elements.finish.textContent = 'วางสาย';
@@ -166,6 +178,7 @@ async function finishCall() {
   if (!call?.id || call.finishing) return;
   call.finishing = true;
   elements.finish.disabled = true;
+  elements.mute.disabled = true;
   elements['call-status'].textContent = 'กำลังบันทึกบทสนทนา…';
   call.mic?.getAudioTracks().forEach((track) => { track.enabled = false; });
   try {
@@ -214,7 +227,9 @@ async function startCall() {
   elements['call-status'].textContent = 'กำลังเปิดไมโครโฟน…';
 
   try {
-    call.mic = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: false, channelCount: 1 }, video: false });
+    call.mic = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true }, video: false });
+    elements.mute.hidden = false;
+    updateMicrophoneControls(call);
     elements['call-status'].textContent = 'กำลังเชื่อมต่อสาย…';
     const peer = new RTCPeerConnection();
     call.peer = peer;
@@ -229,10 +244,11 @@ async function startCall() {
     events.addEventListener('open', () => {
       events.send(JSON.stringify({
         type: 'response.create',
-        response: { instructions: 'ทักทายเป็นภาษาไทย บอกว่าพลอยเป็นผู้ช่วยอัตโนมัติและมีการถอดเสียง แล้วถามว่าติดต่อเรื่องอะไร' },
+        response: { instructions: 'ถ้าผู้โทรยังไม่ได้พูด ให้พูดเพียง “ฮัลโหล มะลิพูดจ้ะ ใครโทรมานะลูก” ถ้าผู้โทรพูดมาแล้ว ให้ตอบเรื่องนั้นทันทีโดยไม่ทักซ้ำ' },
       }));
       card.dataset.active = 'true';
-      elements['call-status'].textContent = 'กำลังสนทนา · พูดผ่านไมโครโฟนได้เลย';
+      call.connected = true;
+      updateMicrophoneControls(call);
     });
     await peer.setLocalDescription(await peer.createOffer());
     await waitForIce(peer);
@@ -258,6 +274,12 @@ async function startCall() {
 }
 
 elements.start.addEventListener('click', startCall);
+elements.mute.addEventListener('click', () => {
+  if (!active?.mic || active.finishing) return;
+  active.muted = !active.muted;
+  for (const track of active.mic.getAudioTracks()) track.enabled = !active.muted;
+  updateMicrophoneControls(active);
+});
 elements['evidence-close'].addEventListener('click', () => elements['evidence-dialog'].close());
 elements['evidence-dialog'].addEventListener('close', () => {
   evidenceRequest?.abort();
