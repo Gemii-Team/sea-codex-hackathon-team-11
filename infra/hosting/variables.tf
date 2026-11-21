@@ -79,3 +79,28 @@ variable "budget_limit_usd" {
   type    = number
   default = 30
 }
+
+# --- Connect web-call PoC (off by default; the two switches are independent) ------------------
+
+variable "poc_registry_enabled" {
+  description = "Create the PoC's own immutable ECR repository ({project}/connect-web-call). Independent of poc_route_enabled."
+  type        = bool
+  default     = false
+}
+
+variable "poc_route_enabled" {
+  description = "Publish poc_hostname through the existing tunnel: one ingress rule before the final 404 plus one proxied CNAME. Needs poc_registry_enabled and ingress_mode = \"tunnel\"; any other combination fails the plan. Deploy and verify the origin first."
+  type        = bool
+  default     = false
+}
+
+variable "poc_hostname" {
+  description = "Single label under zone_name for the Connect web-call PoC. Its PUBLIC_ORIGIN is fixed to https://call-sea-hackathon.voidbox.io."
+  type        = string
+  default     = "call-sea-hackathon"
+
+  validation {
+    condition     = can(regex("^[a-z0-9-]+$", var.poc_hostname))
+    error_message = "poc_hostname must be one DNS label (no dots)."
+  }
+}

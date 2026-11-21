@@ -15,6 +15,8 @@ The console opens to a Thai-language workspace for creating AI agent drafts. Cus
 
 This portal prototype uses browser storage and scripted text previews. Live Amazon Connect routing, OpenAI audio, and shared workspace storage are pending.
 
+For a real browser-to-Amazon Connect audio test, use the separate [Web Calling PoC](connect-web-call/README.md). It has its own frontend, token backend, Connect flow and deployment; saving settings in Agent Studio does not place a call.
+
 ## Run locally
 
 With Docker and Docker Compose installed, run `make up`. Open the console at <http://localhost:5173> and Prometheus at <http://localhost:9090>. In Prometheus, query `orchestrator_api_up` or open the **Alerts** page. To see the API alert fire, run `docker compose stop api`, allow at least one minute plus a scrape interval, then run `docker compose start api`. Run `make down` to stop the stack.

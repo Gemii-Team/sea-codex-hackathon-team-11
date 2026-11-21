@@ -37,3 +37,13 @@ output "cloudflare_account_id" {
 output "tunnel_id" {
   value = local.tunnel ? cloudflare_zero_trust_tunnel_cloudflared.app[0].id : null
 }
+
+output "poc_repository_url" {
+  description = "ECR repository of the Connect web-call PoC; null until poc_registry_enabled."
+  value       = one(aws_ecr_repository.poc[*].repository_url)
+}
+
+output "poc_fqdn" {
+  description = "Hostname the PoC is published on once poc_route_enabled is applied (planned name, not proof of DNS)."
+  value       = local.poc_fqdn
+}
