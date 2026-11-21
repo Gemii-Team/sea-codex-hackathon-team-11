@@ -69,13 +69,13 @@ describe('start', () => {
     await p.shutdown();
   });
 
-  test('session enables Thai input transcription and keeps the marin voice', async () => {
+  test('session enables far-field noise reduction, Thai input transcription and the marin voice', async () => {
     const h = harness({ handler: (url) => (isCreate(url) ? created()() : ok()) });
     const p = h.make();
     await p.start(OFFER);
     const session = JSON.parse(h.calls[0].init.body.get('session'));
     assert.deepEqual(session.audio, {
-      input: { transcription: { model: 'gpt-transcribe', language: 'th' } },
+      input: { noise_reduction: { type: 'far_field' }, transcription: { model: 'gpt-transcribe', language: 'th' } },
       output: { voice: 'marin' },
     });
     await p.shutdown();
