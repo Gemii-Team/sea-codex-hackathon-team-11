@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { parseEnv } from 'node:util';
 import { contactIdPattern, createHistoryStore } from './history.mjs';
 import { createEvidenceAccess } from './evidence.mjs';
-import { startRealtime } from './realtime.mjs';
+import { startRealtime } from './standalone-realtime.mjs';
 import { createTranscript, maskSensitive } from './transcript.mjs';
 
 const port = Number(process.env.PHONE_DEMO_PORT ?? 8783);

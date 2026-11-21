@@ -1,0 +1,61 @@
+import { instructions } from './mali-prompt.mjs';
+
+const endpoint = 'https://api.openai.com/v1/realtime/calls';
+
+export async function startRealtime({ key, model, sdp, onEvent, onClose }) {
+  const form = new FormData();
+  form.set('sdp', sdp);
+  form.set('session', JSON.stringify({
+    type: 'realtime',
+    model,
+    instructions,
+    output_modalities: ['audio'],
+    audio: {
+      input: {
+        transcription: { model: 'gpt-4o-mini-transcribe', language: 'th' },
+        turn_detection: { type: 'server_vad', create_response: true, interrupt_response: true },
+      },
+      output: { voice: 'marin' },
+    },
+  }));
+
+  const headers = { Authorization: 'Bearer ' + key };
+  const response = await fetch(endpoint, { method: 'POST', headers, body: form, signal: AbortSignal.timeout(18_000) });
+  if (!response.ok) {
+    const problem = await response.json().catch(() => ({}));
+    const code = problem.error?.code;
+    const message = response.status === 401 ? 'OpenAI ไม่รับ API key นี้'
+      : code === 'insufficient_quota' ? 'บัญชี OpenAI มีเครดิตไม่พอสำหรับเริ่มสาย'
+      : 'OpenAI เปิดสายไม่สำเร็จ กรุณาตรวจสิทธิ์โมเดลและเครดิต';
+    throw new Error(message);
+  }
+
+  const id = response.headers.get('location')?.split('/').pop();
+  if (!id || !/^rtc_[A-Za-z0-9_-]+$/.test(id)) throw new Error('OpenAI ไม่ได้ส่ง Call ID กลับมา');
+  const answer = await response.text();
+  const hangUp = () => fetch(`${endpoint}/${id}/hangup`, {
+    method: 'POST', headers, signal: AbortSignal.timeout(6000),
+  }).then((result) => result.ok || result.status === 404);
+
+  const socket = new WebSocket(`wss://api.openai.com/v1/realtime?call_id=${id}`, { headers });
+  socket.addEventListener('message', ({ data }) => {
+    if (typeof data === 'string') onEvent(JSON.parse(data));
+  });
+  try {
+    await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('รอช่องบันทึกบทสนทนานานเกินไป')), 7500);
+      socket.addEventListener('open', () => { clearTimeout(timer); resolve(); }, { once: true });
+      socket.addEventListener('error', () => {
+        clearTimeout(timer);
+        reject(new Error('เปิดช่องบันทึกบทสนทนาไม่สำเร็จ'));
+      }, { once: true });
+    });
+  } catch (error) {
+    socket.close();
+    await hangUp().catch(() => {});
+    throw error;
+  }
+  socket.addEventListener('close', onClose, { once: true });
+
+  return { answer, hangUp, close: () => socket.close() };
+}
