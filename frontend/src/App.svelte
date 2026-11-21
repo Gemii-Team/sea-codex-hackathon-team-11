@@ -1,4 +1,5 @@
 <script>
+  import { planPloyTurn, ployGreeting, ployId } from './ploy.js';
   import PhoneHistory from './PhoneHistory.svelte';
   import Health from './Health.svelte';
   import VoiceDemo from './VoiceDemo.svelte';
@@ -33,12 +34,12 @@
   };
 
   const ploy = {
-    ...emptyAgent, id: 'infra-phone-ploy', name: 'ป้าพลอย', business: 'สายฝึกมิจฉาชีพ',
+    ...emptyAgent, id: ployId, name: 'ป้าพลอย', business: 'สายฝึกมิจฉาชีพ',
     persona: 'ป้าพลอย อายุ 68 ปี ใช้มือถือโทรหาหลานเป็นหลัก คุยเป็นกันเอง แทนตัวเองว่าป้า',
-    greeting: 'ฮัลโหล ป้าพลอยพูดจ้ะ ใครโทรมาจ๊ะ',
+    greeting: ployGreeting,
     objective: 'ให้ผู้โทรเล่าด้วยตัวเองว่าติดต่อเรื่องอะไร ต้องการให้ป้าทำอะไร และอ้างข้อมูลอะไรสนับสนุน',
     instructions: 'รับคำสั้น ๆ แล้วรอฟัง ถ้ามีคนอ้างว่ามีพัสดุ ให้สนใจว่าพัสดุอะไร หากเขาบอกแล้วให้ถามเฉพาะรายละเอียดที่ยังขาด ไม่เสนอชื่อบริษัทหรือยอดให้เลือก',
-    openingQuestion: 'หนูโทรมาเรื่องอะไรจ๊ะ'
+    openingQuestion: 'ติดต่อเรื่องอะไรคะ'
   };
 
   function loadAgents() {
@@ -61,6 +62,7 @@
         if (Object.hasOwn(scenarios, entry.lastTest?.scenario) && isTimestamp(entry.lastTest.at)) {
           draft.lastTest = entry.lastTest;
         }
+        if (draft.id === ployId) draft.greeting = ployGreeting;
         drafts.set(draft.id, draft);
       }
       return [...drafts.values()];
@@ -75,7 +77,9 @@
 
   let agents = $state(loadAgents());
   let agent = $state({ ...emptyAgent });
-  let page = $state('monitor');
+  let page = $state(new URLSearchParams(location.search).get('agent') === ploy.id ? 'call' : 'monitor');
+  let notebook = $state(null);
+  let callAgent = $derived(agents.find(row => row.id === ploy.id) ?? ploy);
   let scenario = $state('mule');
   let tried = $state(false);
   let feedback = $state('');
@@ -87,7 +91,8 @@
     { role: 'caller', text: muleEvidence[1].quote },
     { role: 'agent', text: 'ขอเลขอ้างอิงรายการด้วยค่ะ' },
     { role: 'caller', text: muleEvidence[2].quote }
-  ] : [{ role: 'agent', text: scenarios[scenario].reply }]);
+  ] : [{ role: 'agent', text: agent.id === ployId && scenario === 'promptpay'
+    ? planPloyTurn(scenarios.promptpay.caller, [scenarios.promptpay.caller], new Set()).line : scenarios[scenario].reply }]);
 
   let connectFilter = $state('all');
   const dateFormat = new Intl.DateTimeFormat('th-TH', {
@@ -143,8 +148,9 @@
 
 <div class="shell">
   <aside class="rail">
-    <a class="brand" href="./"><span class="mark" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span><span>Wirachit<small>Voice workspace</small></span></a>
+    <a class="brand" href="./"><img class="mark" src="/mali/logo.png" alt="" width="42" height="42"><span>Yai Mali<small>ยายมะลิ · Agent Studio</small></span></a>
     <nav aria-label="เมนูหลัก">
+      <button class={{ active: page === 'call' }} aria-current={page === 'call' ? 'page' : undefined} onclick={() => page = 'call'}><span class="nav-icon" aria-hidden="true">☏</span>โทรหาป้าพลอย</button>
       <button class={{ active: page === 'monitor' }} aria-current={page === 'monitor' ? 'page' : undefined} onclick={() => page = 'monitor'}><span class="nav-icon" aria-hidden="true">◈</span>ติดตาม Agents</button>
       <button class={{ active: page === 'editor' }} aria-current={page === 'editor' ? 'page' : undefined} onclick={() => edit()}><span class="nav-icon" aria-hidden="true">＋</span>สร้าง Agent</button>
       <button class={{ active: page === 'history' }} onclick={() => page = 'history'}><span class="nav-icon" aria-hidden="true">☏</span>ประวัติสายฝึก</button>
@@ -152,7 +158,20 @@
     </nav>
   </aside>
 
-  {#if page === 'history'}
+  {#if page === 'call'}
+    <main class="content" lang="th">
+      <div class="breadcrumb"><a href="./">Agent Studio</a> / สายฝึกภาษาไทย</div>
+      <header class="page-title"><div><h1>โทรหาป้าพลอย</h1><p>คุณเล่นเป็นผู้โทร พลอยรับสายและจดข้ออ้างไว้ตรวจสอบ</p></div></header>
+      <div class="call-layout">
+        <VoiceDemo agent={callAgent} dedicated onNotebook={(note) => notebook = note} />
+        <aside class="card notebook"><h2>สมุดบันทึกของพลอย</h2>
+          {#if notebook?.text}<p class="voice-summary">{notebook.text}</p>
+          {:else}<p class="muted">หลังวางสาย ข้ออ้างที่ได้ยินจากผู้โทรจะปรากฏที่นี่</p>{/if}
+          <button class="agent-link" onclick={() => page = 'history'}>เปิดประวัติสายฝึก</button>
+        </aside>
+      </div>
+    </main>
+  {:else if page === 'history'}
     <main class="content" lang="th"><PhoneHistory /></main>
   {:else if page === 'health'}
     <div class="content system-health"><Health /></div>
@@ -164,6 +183,11 @@
         <button class="button primary" onclick={() => edit()}>＋ สร้าง Agent</button>
       </header>
 
+      <section class="practice-hero">
+        <div><h2>ลองโทรหาป้าพลอย</h2><p>เล่นเป็นผู้โทรที่อ้างว่ามีค่าจัดส่งค้างอยู่ แล้วดูว่าพลอยจดอะไรได้บ้าง</p>
+        <a class="button primary" href="?agent=infra-phone-ploy">เข้าสายฝึก</a></div>
+        <img src="/mali/mascot.png" alt="" width="184" height="168">
+      </section>
       <dl class="agent-metrics" aria-label="สรุป Agents">
         <div class="card"><dt>ร่างทั้งหมด</dt><dd>{agents.length}</dd></div>
         <div class="card"><dt>กรอกข้อมูล Connect ครบ</dt><dd>{configured}</dd></div>
@@ -234,7 +258,7 @@
               <label>ชื่อธุรกิจ<input maxlength="100" bind:value={agent.business} /></label>
             </div>
             <label>น้ำเสียง<select bind:value={agent.tone}><option>เป็นกันเอง</option><option>สุภาพเป็นทางการ</option><option>กระชับ</option></select></label>
-            <label>คำทักทาย<textarea required rows="3" maxlength="500" bind:value={agent.greeting}></textarea></label>
+            <label>คำทักทาย<textarea required rows="3" maxlength="500" readonly={agent.id === ployId} bind:value={agent.greeting}></textarea></label>
             <label>คำสั่งสำหรับ Agent<textarea rows="3" maxlength="2000" bind:value={agent.instructions}></textarea></label>
           </section>
 
