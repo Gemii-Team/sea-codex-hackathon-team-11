@@ -36,8 +36,40 @@ bin/deploy placeholder              # expect: https://sea-hackathon.voidbox.io/ 
 restarts the stack on the server. The server runs that image as one container, `app`, serving HTTP on
 port 8080 (also passed in as `PORT`).
 
-An app made of several containers (for example an API, a worker and a frontend) needs more services
-in `server/compose.yml`; the tunnel then routes to whichever service serves the site.
+Use `bin/deploy ../../frontend --stack` to deploy Agent Studio with the Go API and monitor.
+The production Compose overlay adds both services on the private Docker network.
+
+## GitHub Actions
+
+Production deploys use the existing ARM64 EC2 host, ECR repository and SSM. CI runs on pushes and pull requests.
+Once enabled, passing default-branch pushes and manual runs on the default branch deploy to the GitHub
+`production` environment. Deployments run one at a time and check both the HTTPS homepage and API status.
+
+1. Create or reuse the AWS IAM OIDC identity provider for `https://token.actions.githubusercontent.com`
+   with audience `sts.amazonaws.com`. Set `github_repository = "Gemii-Team/sea-codex-hackathon-team-11"`
+   in `terraform.tfvars`, then plan and apply the reviewed hosting changes.
+2. Create the GitHub `production` environment and restrict deployments to the default branch. Configure required
+   reviewers if your GitHub plan supports them. Add these environment variables in GitHub Actions settings.
+
+   | Variable | Value |
+   | --- | --- |
+   | `AWS_DEPLOY_ROLE_ARN` | `bin/tf output -raw github_deploy_role_arn` |
+   | `AWS_REGION` | `bin/tf output -raw region` |
+   | `HOSTING_OUTPUTS_JSON` | JSON object generated below |
+
+   ```sh
+   bin/tf output -json | jq -c '{project,region,instance_id,ecr_repository_url,ingress_mode,fqdn,app_port} | map_values(.value)'
+   ```
+
+3. Set the repository-level Actions variable `ENABLE_HOSTING_CD` to `true` after the host and its ingress are ready.
+   Run **CI/CD** from Actions on the default branch for the first deploy. Refresh `HOSTING_OUTPUTS_JSON` when
+   the instance or ingress settings change.
+
+The deploy role can push to the hosting ECR repository and run SSM commands on the hosting instance.
+Infrastructure changes still use the reviewed OpenTofu workflow. If a release fails its smoke checks,
+revert the release commit on the default branch or manually deploy a known-good checkout.
+
+### Runtime settings
 
 App secrets and settings live in SSM. Each parameter under `/sea-hackathon/app/` becomes an env var
 (single-line values). Redeploy after changing them. Keep values out of shell history, e.g.:

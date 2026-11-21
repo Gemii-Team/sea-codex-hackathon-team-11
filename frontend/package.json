@@ -4,7 +4,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build"
+    "build": "vite build",
+    "preview": "vite preview --host 127.0.0.1 --strictPort"
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^5.0.3",
