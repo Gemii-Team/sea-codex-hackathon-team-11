@@ -17,6 +17,7 @@ umask 077
 
 printf 'IMAGE=%s\nAPP_PORT=%s\nFQDN=%s\nCOMPOSE_PROFILES=%s\n' "$image" "$app_port" "$fqdn" "$mode" > .env
 if [ -n "$api_image" ]; then
+  printf 'PHONE_IMAGE=%s-phone\n' "$image" >> .env
   printf 'COMPOSE_FILE=compose.yml:stack.yml\nAPI_IMAGE=%s\nMONITOR_IMAGE=%s\n' "$api_image" "$monitor_image" >> .env
 fi
 export COMPOSE_PROFILES=$mode
@@ -35,7 +36,7 @@ aws ssm get-parameters-by-path --region "$region" --path "/$project/app/" --recu
   awk -F'\t' 'NF >= 2 { n = $1; sub(/.*\//, "", n); print n "=" $2 }' > app.env
 : > voice.env
 : > app.public.env
-awk -F= '$1 == "OPENAI_API_KEY" || $1 == "VOICE_DEMO_CODE" { print > "voice.env" ; next } { print > "app.public.env" }' app.env
+awk -F= '$1 == "OPENAI_API_KEY" || $1 == "VOICE_DEMO_CODE" || $1 == "PHONE_HISTORY_BUCKET" || $1 == "PHONE_HISTORY_REGION" { print > "voice.env" ; next } { print > "app.public.env" }' app.env
 touch voice.env app.public.env
 mv app.public.env app.env
 echo "app env vars: $(cut -d= -f1 app.env | paste -sd, -)"

@@ -6,7 +6,19 @@ services:
       - voice_data:/var/lib/wirachit
     environment:
       API_ADDR: ":8080"
+      PHONE_HISTORY_URL: http://phone-history:8783
       MONITOR_URL: http://monitor:8081
+    restart: unless-stopped
+  phone-history:
+    image: ${PHONE_IMAGE:?PHONE_IMAGE is required}
+    env_file: [voice.env]
+    volumes:
+      - phone_history:/data
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8783/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 4s
+      retries: 4
     restart: unless-stopped
   monitor:
     image: ${MONITOR_IMAGE:?MONITOR_IMAGE is required}
@@ -17,3 +29,4 @@ services:
 
 volumes:
   voice_data:
+  phone_history:

@@ -37,6 +37,7 @@ func registerVoice(routes *http.ServeMux) {
 		_, _ = io.WriteString(mac, id)
 		return hex.EncodeToString(mac.Sum(nil))
 	}
+	attachPhoneHistory := registerPhoneHistory(routes, authorized, recordingToken)
 	registerVoiceSamples(routes, key)
 	registerVoiceRecordings(routes, authorized, recordingToken)
 	var lock sync.Mutex
@@ -51,6 +52,7 @@ func registerVoice(routes *http.ServeMux) {
 			http.Error(w, "Invalid demo access code", http.StatusUnauthorized)
 			return
 		}
+		_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(22 * time.Second))
 		var input struct {
 			SDP, Name, Persona, Objective, Greeting, Instructions, Question, Tone, Voice string
 		}
@@ -66,7 +68,7 @@ func registerVoice(routes *http.ServeMux) {
 			http.Error(w, "Unsupported voice", http.StatusBadRequest)
 			return
 		}
-		instructions := fmt.Sprintf(`คุณเป็นผู้ช่วย AI ในเดโมรับสายจำลอง พูดภาษาไทยและแจ้งว่าเป็น AI เปิดด้วยคำทักทายที่กำหนด ถามทีละข้อและกระชับ ถามต่อจากสิ่งที่ผู้โทรแจ้งเพื่อเก็บข้อมูลที่ใช้ตรวจสอบ เช่น ชื่อบริษัท ยอด และเลขอ้างอิง ห้ามขอรหัสผ่าน OTP หรือข้อมูลการเงินส่วนตัว ห้ามทำธุรกรรม
+		instructions := fmt.Sprintf(`คุณรับบทเป็นผู้รับสายในแบบฝึกรับมือมิจฉาชีพภาษาไทย ผู้โทรเล่นบทผู้ที่พยายามหลอกลวง เปิดด้วยคำทักทายที่กำหนด พูดเป็นธรรมชาติตามบุคลิก ฟังข้ออ้างแล้วถามต่อทีละเรื่อง เช่น ติดต่อจากที่ไหน เกี่ยวกับรายการอะไร มีเลขอ้างอิงให้ตรวจสอบไหม บันทึกสิ่งที่ผู้โทรกล่าวโดยไม่ฟันธงว่าเป็นความจริง อย่าเสนอขายบริการหรือถามว่ามีอะไรให้ช่วย ห้ามขอรหัสผ่าน OTP หรือข้อมูลการเงินส่วนตัว ห้ามทำธุรกรรม
 ชื่อ: %s
 บุคลิก: %s
 น้ำเสียง: %s
@@ -155,6 +157,7 @@ func registerVoice(routes *http.ServeMux) {
 			log.Print("OpenAI call cleanup did not confirm hangup")
 		})
 		w.Header().Set("Content-Type", "application/sdp")
+		w.Header().Set("X-Phone-History", strconv.FormatBool(attachPhoneHistory(id)))
 		w.Header().Set("X-Voice-Call-ID", id)
 		w.Header().Set("X-Voice-Recording-Token", recordingToken(id))
 		_, _ = io.Copy(w, io.LimitReader(response.Body, 32<<10))

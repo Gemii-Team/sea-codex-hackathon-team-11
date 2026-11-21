@@ -14,7 +14,7 @@ import (
 // The public picker has exactly three fixed samples. Generate each once on the
 // server and reuse its MP3 across devices and visits.
 func registerVoiceSamples(routes *http.ServeMux, key string) {
-	const greeting = "สวัสดีค่ะ นี่คือผู้ช่วยเอไอค่ะ วันนี้มีเรื่องอะไรให้ช่วยคะ"
+	const greeting = "สวัสดีจ้ะ ยายมะลิรับสายจ้ะ หนูโทรมาเรื่องอะไรเหรอ"
 	const dir = "/var/lib/wirachit"
 	var lock sync.Mutex
 	retryAfter := make(map[string]time.Time)
@@ -26,7 +26,7 @@ func registerVoiceSamples(routes *http.ServeMux, key string) {
 			http.NotFound(w, r)
 			return
 		}
-		name := filepath.Join(dir, "sample-v1-"+voice+".mp3")
+		name := filepath.Join(dir, "sample-v2-"+voice+".mp3")
 		lock.Lock()
 		defer lock.Unlock()
 		if _, err := os.Stat(name); os.IsNotExist(err) {
