@@ -3,7 +3,10 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
 	"crypto/subtle"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -12,6 +15,7 @@ import (
 	"net/http"
 	"os"
 	"path"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -25,6 +29,15 @@ func registerVoice(routes *http.ServeMux) {
 	key := os.Getenv("OPENAI_API_KEY")
 	code := os.Getenv("VOICE_DEMO_CODE")
 	client := &http.Client{Timeout: 8 * time.Second}
+	authorized := func(r *http.Request) bool {
+		return code != "" && subtle.ConstantTimeCompare([]byte(r.Header.Get("X-Voice-Demo-Code")), []byte(code)) == 1
+	}
+	recordingToken := func(id string) string {
+		mac := hmac.New(sha256.New, []byte(code))
+		_, _ = io.WriteString(mac, id)
+		return hex.EncodeToString(mac.Sum(nil))
+	}
+	registerVoiceRecordings(routes, authorized, recordingToken)
 	var lock sync.Mutex
 	active := false
 	routes.HandleFunc("POST /api/v1/voice/calls", func(w http.ResponseWriter, r *http.Request) {
@@ -33,7 +46,7 @@ func registerVoice(routes *http.ServeMux) {
 			http.Error(w, "Voice demo is unavailable", http.StatusServiceUnavailable)
 			return
 		}
-		if subtle.ConstantTimeCompare([]byte(r.Header.Get("X-Voice-Demo-Code")), []byte(code)) != 1 {
+		if !authorized(r) {
 			http.Error(w, "Invalid demo access code", http.StatusUnauthorized)
 			return
 		}
@@ -115,7 +128,7 @@ func registerVoice(routes *http.ServeMux) {
 			return
 		}
 		id := path.Base(response.Header.Get("Location"))
-		if !strings.HasPrefix(id, "rtc_") || strings.ContainsAny(id, "/?#%") {
+		if !validVoiceCallID(id) {
 			time.AfterFunc(callDuration, release)
 			http.Error(w, "OpenAI call ID missing", http.StatusBadGateway)
 			return
@@ -138,6 +151,8 @@ func registerVoice(routes *http.ServeMux) {
 			log.Print("OpenAI call cleanup did not confirm hangup")
 		})
 		w.Header().Set("Content-Type", "application/sdp")
+		w.Header().Set("X-Voice-Call-ID", id)
+		w.Header().Set("X-Voice-Recording-Token", recordingToken(id))
 		_, _ = io.Copy(w, io.LimitReader(response.Body, 32<<10))
 	})
 }
@@ -162,4 +177,74 @@ func reserveVoiceCall() error {
 		return err
 	}
 	return os.Rename(file+".next", file)
+}
+
+func validVoiceCallID(id string) bool {
+	if !strings.HasPrefix(id, "rtc_") || len(id) < 5 || len(id) > 100 {
+		return false
+	}
+	for _, c := range id {
+		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '_' || c == '-') {
+			return false
+		}
+	}
+	return true
+}
+
+func registerVoiceRecordings(routes *http.ServeMux, authorized func(*http.Request) bool, token func(string) string) {
+	const dir = "/var/lib/wirachit"
+	routes.HandleFunc("/api/v1/voice/recordings/{id}", func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
+		w.Header().Set("Cache-Control", "no-store")
+		if !authorized(r) || !validVoiceCallID(id) ||
+			!hmac.Equal([]byte(r.Header.Get("X-Voice-Recording-Token")), []byte(token(id))) {
+			http.Error(w, "Invalid recording access", http.StatusUnauthorized)
+			return
+		}
+		filename := filepath.Join(dir, id+".webm")
+		switch r.Method {
+		case http.MethodGet:
+			w.Header().Set("Content-Type", "audio/webm")
+			w.Header().Set("Content-Disposition", "attachment; filename="+id+".webm")
+			http.ServeFile(w, r, filename)
+		case http.MethodPut:
+			if r.Header.Get("Content-Type") != "audio/webm" {
+				http.Error(w, "Expected audio/webm", http.StatusUnsupportedMediaType)
+				return
+			}
+			body := http.MaxBytesReader(w, r.Body, 5<<20)
+			header := make([]byte, 4)
+			if _, err := io.ReadFull(body, header); err != nil || !bytes.Equal(header, []byte{0x1a, 0x45, 0xdf, 0xa3}) {
+				http.Error(w, "Invalid WebM recording", http.StatusBadRequest)
+				return
+			}
+			file, err := os.CreateTemp(dir, "recording-*")
+			if err != nil {
+				http.Error(w, "Recording storage unavailable", http.StatusServiceUnavailable)
+				return
+			}
+			defer os.Remove(file.Name())
+			defer file.Close()
+			if _, err := io.Copy(file, io.MultiReader(bytes.NewReader(header), body)); err != nil {
+				http.Error(w, "Could not receive recording", http.StatusBadRequest)
+				return
+			}
+			if err := file.Sync(); err != nil {
+				http.Error(w, "Could not save recording", http.StatusInternalServerError)
+				return
+			}
+			if err := os.Link(file.Name(), filename); err != nil {
+				if os.IsExist(err) {
+					http.Error(w, "Recording already saved", http.StatusConflict)
+				} else {
+					http.Error(w, "Could not save recording", http.StatusInternalServerError)
+				}
+				return
+			}
+			w.WriteHeader(http.StatusCreated)
+		default:
+			w.Header().Set("Allow", "GET, PUT")
+			w.WriteHeader(http.StatusMethodNotAllowed)
+		}
+	})
 }
