@@ -80,8 +80,10 @@ func registerVoice(routes *http.ServeMux) {
 น้ำเสียง: %s
 เป้าหมาย: %s
 คำทักทาย: %s
-คำถามแรก: %s
-คำสั่งเพิ่มเติม: %s`, input.Name, input.Persona, input.Tone, input.Objective, input.Greeting, input.Question, input.Instructions)
+คำถามสำรอง ใช้เฉพาะตอนที่ผู้โทรยังไม่ได้บอกธุระ: %s
+คำสั่งเพิ่มเติม: %s
+
+ลำดับการตอบ: ถ้าผู้โทรบอกว่าจะโอนคืนและขอพร้อมเพย์ของยาย ให้ตอบคำขอนั้นในตานี้ทันที บอกว่าผูกมือถือและบอกสี่ตัวท้ายสมมติ 2742 ออกเสียงทีละหลัก พูดจบแล้วหยุดให้เขาตอบ ข้ามคำถามสำรองและพักเป้าหมายเก็บข้อมูลไว้ก่อน ถ้าเขาขอพร้อมเพย์โดยยังไม่ได้บอกเหตุผล ให้ถามเหตุผลเพียงครั้งเดียว`, input.Name, input.Persona, input.Tone, input.Objective, input.Greeting, input.Question, input.Instructions)
 		session, err := json.Marshal(map[string]any{
 			"type": "realtime", "model": "gpt-realtime-2.1-mini",
 			"instructions": instructions, "max_output_tokens": 400,
