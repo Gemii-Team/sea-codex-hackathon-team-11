@@ -25,14 +25,14 @@ export function createRealtimeOffer({ key, model, sdp, profile, transcriptionMod
     type: 'realtime',
     model,
     instructions: role + '\nถ้าได้ยินแต่เสียงห้อง เสียงกระทบ หรือเสียงสะท้อนของตัวเอง ให้รอเงียบ ๆ ถ้าได้ยินคนพูดแต่จับคำไม่ได้ ให้ขอให้พูดซ้ำสั้น ๆ ไม่เดาหรือเปลี่ยนเรื่อง',
-    ...(profile ? { max_output_tokens: 400 } : {}),
+    ...(profile ? { max_output_tokens: 1000 } : {}),
     output_modalities: ['audio'],
     audio: {
       input: {
         noise_reduction: { type: 'far_field' },
         transcription: { model: transcriptionModel, language: 'th' },
         turn_detection: { type: 'server_vad', threshold: 0.62, prefix_padding_ms: 350, silence_duration_ms: 750,
-          create_response: true, interrupt_response: true },
+          create_response: profile?.AgentID !== 'infra-phone-ploy', interrupt_response: true },
       },
       output: { voice: profile?.Voice ?? 'marin' },
     },

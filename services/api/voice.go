@@ -100,7 +100,7 @@ func registerVoice(routes *http.ServeMux) {
 		}
 		_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(33 * time.Second))
 		var input struct {
-			SDP, Name, Persona, Objective, Greeting, Instructions, Question, Tone, Voice string
+			AgentID, SDP, Name, Persona, Objective, Greeting, Instructions, Question, Tone, Voice string
 		}
 		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 32<<10)).Decode(&input); err != nil ||
 			!strings.HasPrefix(input.SDP, "v=0") || len(input.SDP) > 20<<10 ||
