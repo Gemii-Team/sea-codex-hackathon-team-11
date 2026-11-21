@@ -33,6 +33,11 @@ fi
 aws ssm get-parameters-by-path --region "$region" --path "/$project/app/" --recursive \
   --with-decryption --query 'Parameters[].[Name,Value]' --output text |
   awk -F'\t' 'NF >= 2 { n = $1; sub(/.*\//, "", n); print n "=" $2 }' > app.env
+: > voice.env
+: > app.public.env
+awk -F= '$1 == "OPENAI_API_KEY" || $1 == "VOICE_DEMO_CODE" { print > "voice.env" ; next } { print > "app.public.env" }' app.env
+touch voice.env app.public.env
+mv app.public.env app.env
 echo "app env vars: $(cut -d= -f1 app.env | paste -sd, -)"
 
 aws ecr get-login-password --region "$region" |

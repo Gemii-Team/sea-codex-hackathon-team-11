@@ -11,7 +11,7 @@ Operator → OpenTofu → AWS hosting
 
 ## Agent Studio
 
-The console opens to a Thai-language workspace for creating AI agent drafts. Customize the greeting, tone, and instructions, preview a scripted conversation, and save drafts in the current browser. The Amazon Connect section stores the AWS region, instance ID, published contact flow ID, and inbound number for future integration. The system health page remains available from the sidebar.
+The Thai-language workspace opens to a searchable list of agents. Create or edit a draft, customize its greeting, tone, and instructions, and save a scripted conversation test with the draft. The list shows Amazon Connect configuration completeness and the last saved test. The system health page remains available from the sidebar.
 
 This portal prototype uses browser storage and scripted text previews. Live Amazon Connect routing, OpenAI audio, and shared workspace storage are pending.
 
@@ -43,7 +43,7 @@ The console polls control-plane health every 15 seconds. The monitor probes the 
 
 ## Verification
 
-`make check` runs the Go tests, builds the frontend with the Bun lockfile, and validates the Compose configuration. GitHub Actions also builds and smoke-tests the container stack, validates the hosting OpenTofu root, and runs the mocked hosting tests.
+`make check` runs the Go tests, builds the frontend with the Bun lockfile, and validates the Compose configuration. GitHub Actions also validates the hosting OpenTofu root and runs the mocked hosting tests.
 
 See the [hosting runbook](infra/hosting/README.md#github-actions) to enable AWS deployments after CI passes.
 
