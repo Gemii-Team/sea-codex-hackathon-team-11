@@ -9,7 +9,7 @@
 // never contain provider response bodies, headers or the key.
 //
 // Slot and quota state is persisted in `${stateDir}/voice-state.json` (single replica, writable
-// volume) so the 25-call quota and an in-flight call survive a restart or redeploy:
+// volume) so the 100-call quota and an in-flight call survive a restart or redeploy:
 //   { version: 1, count, active: null | { reservedAt, id: string|null, endsAt: number|null } }
 // `count` is never refunded: a submission that may have reached OpenAI is spent. A reservation
 // whose outcome is uncertain (network error, 5xx, missing id) is kept, never renewed, and only
@@ -22,7 +22,7 @@ export const OPENAI_BASE = 'https://api.openai.com';
 export const MODEL = 'gpt-realtime-2.1';
 export const VOICE = 'marin';
 export const MAX_CALL_MS = 3 * 60 * 1000;
-export const CALL_LIMIT = 25;
+export const CALL_LIMIT = 100;
 // No new call starts within this long before the mandatory cutoff.
 export const NO_NEW_CALL_MS = 4 * 60 * 1000;
 // Known calls are hung up this long before the cutoff.

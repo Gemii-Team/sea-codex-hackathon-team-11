@@ -209,7 +209,7 @@ describe('uncertain outcomes', () => {
 });
 
 describe('quota, cutoff and bounds', () => {
-  test('25 submissions persist across restarts, then 429', async () => {
+  test('CALL_LIMIT (100) submissions persist across restarts, then 429', async () => {
     const h = harness({ handler: (url) => (isCreate(url) ? created()() : ok()) });
     for (let i = 0; i < CALL_LIMIT; i += 1) {
       const p = h.make(); // fresh process each time

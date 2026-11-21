@@ -61,7 +61,7 @@ Run from the repository root. Every command goes through `connect-web-call/bin/w
 Anyone with the URL can use the app, so the OpenAI key is protected only by these limits. The server enforces all of them; none depends on the browser.
 
 - Chat: 30 requests per rolling minute for everyone combined, at most 30 messages per request, small request bodies.
-- Voice: one call at a time, at most 3 minutes each, 25 call attempts in total. The server reserves an attempt on disk before contacting OpenAI; the counter survives a restart under `/opt/yai-mali-dev/state`. Do not reset it to troubleshoot.
+- Voice: one call at a time, at most 3 minutes each, 100 call attempts in total. The server reserves an attempt on disk before contacting OpenAI; the counter survives a restart under `/opt/yai-mali-dev/state`. Do not reset it to troubleshoot.
 - Voice cutoff **23:59 Bangkok on 21 Nov** (`VOICE_CUTOFF_AT=2026-11-21T16:59:00Z`): no new call from 23:55, known calls end by 23:57. There is no systemd timer for this app; after the cutoff the app only refuses calls, and the container stays up until it is stopped by hand.
 - Every POST must come from the page's own origin (`Origin` equals `https://sea-hackathon-dev.voidbox.io`); anything else gets 403 before any body is read.
 - Emergency stop: unpublish the route or stop the container (see Roll back), and rotate `OPENAI_API_KEY` in OpenAI if the key itself is in doubt.
