@@ -1,22 +1,16 @@
-// Runtime configuration for the connect-web-call origin.
+// Runtime configuration for the voice-call origin.
 //
 // Every value arrives through the environment. Anything missing or malformed aborts startup
-// with the variable *names* that failed, never their values. There are no defaults for the
-// widget identifiers or for either secret.
+// with the variable *names* that failed, never their values.
 import { isIP } from 'node:net';
-import { isSnippetId, isWidgetId, parseWidgetScriptUrl } from '../frontend/widget.mjs';
 
-export const REQUIRED_ENV = [
-  'PUBLIC_ORIGIN',
-  'WIDGET_SCRIPT_URL',
-  'WIDGET_ID',
-  'WIDGET_SNIPPET_ID',
-  'WIDGET_SIGNING_KEY',
-  'DEMO_PASSWORD',
-];
+export const REQUIRED_ENV = ['PUBLIC_ORIGIN', 'DEMO_PASSWORD', 'OPENAI_API_KEY', 'VOICE_CUTOFF_AT'];
+export const DEFAULT_STATE_DIR = '/var/lib/team-voice';
 
-const SIGNING_KEY = /^[\x21-\x7e]{44}$/; // Connect issues a 44-character key; it is used literally.
 const DEMO_PASSWORD = /^[\x21-\x7e]{16,128}$/; // visible ASCII only, so Basic-auth encoding is unambiguous
+const API_KEY = /^[\x21-\x7e]{20,512}$/;
+// Date and time with an explicit zone; a bare local time would silently depend on the host.
+const ISO_DATETIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d{1,3})?)?(Z|[+-]\d{2}:\d{2})$/;
 const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]']);
 
 export class ConfigError extends Error {
@@ -60,38 +54,31 @@ export function loadConfig(env) {
     if (!publicOrigin) problem('PUBLIC_ORIGIN', 'must be an https origin with no path (http only for localhost)');
   }
 
-  const scriptRaw = value('WIDGET_SCRIPT_URL');
-  let scriptUrl;
-  if (scriptRaw !== undefined) {
-    const parsed = parseWidgetScriptUrl(scriptRaw);
-    if (parsed.ok) scriptUrl = parsed.url;
-    else problem('WIDGET_SCRIPT_URL', parsed.reason);
-  }
-
-  const widgetId = value('WIDGET_ID');
-  if (widgetId !== undefined && !isWidgetId(widgetId)) {
-    problem('WIDGET_ID', 'must be the widget ID UUID from the embed script');
-  }
-
-  const snippetId = value('WIDGET_SNIPPET_ID');
-  if (snippetId !== undefined && !isSnippetId(snippetId)) {
-    problem('WIDGET_SNIPPET_ID', 'must be the snippetId string from the embed script');
-  }
-  if (widgetId !== undefined && widgetId === snippetId) {
-    problem('WIDGET_SNIPPET_ID', 'must differ from WIDGET_ID (the JWT subject is the widget ID, not the snippet ID)');
-  }
-
-  const signingKey = value('WIDGET_SIGNING_KEY');
-  if (signingKey !== undefined && !SIGNING_KEY.test(signingKey)) {
-    problem('WIDGET_SIGNING_KEY', 'must be the 44-character widget security key, with no whitespace');
-  }
-
   const demoPassword = value('DEMO_PASSWORD');
   if (demoPassword !== undefined && !DEMO_PASSWORD.test(demoPassword)) {
     problem('DEMO_PASSWORD', 'must be 16-128 visible ASCII characters with no whitespace');
   }
-  if (demoPassword !== undefined && demoPassword === signingKey) {
-    problem('DEMO_PASSWORD', 'must not reuse the widget signing key');
+
+  const apiKey = value('OPENAI_API_KEY');
+  if (apiKey !== undefined && !API_KEY.test(apiKey)) {
+    problem('OPENAI_API_KEY', 'must be 20-512 visible ASCII characters with no whitespace');
+  }
+  if (apiKey !== undefined && apiKey === demoPassword) {
+    problem('DEMO_PASSWORD', 'must not reuse the OpenAI API key');
+  }
+
+  const cutoffRaw = value('VOICE_CUTOFF_AT');
+  let cutoffAt;
+  if (cutoffRaw !== undefined) {
+    const ms = ISO_DATETIME.test(cutoffRaw) ? Date.parse(cutoffRaw) : Number.NaN;
+    if (Number.isNaN(ms)) problem('VOICE_CUTOFF_AT', 'must be an ISO 8601 datetime with a Z or numeric offset');
+    else cutoffAt = ms; // Unix epoch milliseconds, as createVoiceProvider requires
+  }
+
+  let stateDir = DEFAULT_STATE_DIR;
+  if (env.VOICE_STATE_DIR !== undefined && env.VOICE_STATE_DIR !== '') {
+    stateDir = env.VOICE_STATE_DIR;
+    if (!stateDir.startsWith('/') || stateDir.includes('\0')) problem('VOICE_STATE_DIR', 'must be an absolute path');
   }
 
   let port = 8080;
@@ -106,23 +93,11 @@ export function loadConfig(env) {
 
   if (problems.length > 0) throw new ConfigError(problems);
 
-  const config = {
-    port,
-    host,
-    publicOrigin,
-    signingKey,
-    demoPassword,
-    widget: Object.freeze({ scriptUrl, id: widgetId, snippetId }),
-  };
+  const config = { port, host, publicOrigin, demoPassword, apiKey, cutoffAt, stateDir };
   // Guard against `JSON.stringify(config)` ending up in a log line.
   Object.defineProperty(config, 'toJSON', {
     enumerable: false,
-    value: () => ({ port, host, publicOrigin, widget: { scriptUrl, id: widgetId, snippetId } }),
+    value: () => ({ port, host, publicOrigin, cutoffAt: new Date(cutoffAt).toISOString(), stateDir }),
   });
   return Object.freeze(config);
-}
-
-/** The only widget fields the browser may receive. */
-export function publicWidgetConfig(config) {
-  return { scriptUrl: config.widget.scriptUrl, widgetId: config.widget.id, snippetId: config.widget.snippetId };
 }

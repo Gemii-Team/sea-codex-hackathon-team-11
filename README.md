@@ -15,7 +15,7 @@ The console opens to a Thai-language workspace for creating AI agent drafts. Cus
 
 This portal prototype uses browser storage and scripted text previews. Live Amazon Connect routing, OpenAI audio, and shared workspace storage are pending.
 
-For a real browser-to-Amazon Connect audio test, use the separate [Web Calling PoC](connect-web-call/README.md). It has its own frontend, token backend, Connect flow and deployment; saving settings in Agent Studio does not place a call.
+The separate [Team 11 voice demo](connect-web-call/README.md) connects the browser directly to OpenAI Realtime. It requires team sign-in, does not record calls, and does not use the Amazon Connect voice quota.
 
 ## Run locally
 

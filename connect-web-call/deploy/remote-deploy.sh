@@ -3,10 +3,7 @@
 # and probe.mjs next to it. Do not run it by hand.
 #   remote-deploy.sh up <image@sha256:digest> <project> <region>
 #   remote-deploy.sh check <project> <region>
-# SSM keeps this script and its output in command history, so neither holds a secret. The five PoC
-# parameters are read here by exact name into a 0600 poc.env that Compose reads as format: raw:
-# never printed, never in argv, never interpolated into Compose syntax. The main app (project
-# sea-hackathon) is only read: its container must stay exactly as it is.
+# SSM carries release files, never secret values. Only the private PoC directory and project change.
 set -euo pipefail
 umask 077
 unset COMPOSE_FILE COMPOSE_PROJECT_NAME COMPOSE_PROFILES COMPOSE_ENV_FILES DOCKER_HOST
@@ -18,7 +15,7 @@ die() {
 
 readonly NETWORK=sea-hackathon_default MAIN=sea-hackathon PROJECT_NAME=sea-connect-web-call
 readonly SERVICE=connect-web-call DIR=/opt/connect-web-call
-readonly PARAMS="WIDGET_ID WIDGET_SNIPPET_ID WIDGET_SCRIPT_URL WIDGET_SIGNING_KEY DEMO_PASSWORD"
+readonly PARAMS="OPENAI_API_KEY DEMO_PASSWORD"
 src=$(cd "$(dirname "$0")" && pwd)
 
 mode=${1:-}
@@ -51,10 +48,13 @@ main_id=$(container "$MAIN" app)
 [ "$(docker inspect --format '{{.State.Running}}' "$main_id")" = true ] || die "the main app container is not running"
 
 deploy() {
-  local prev prev_image=none name value widget="" snippet=""
+  local prev prev_image=none name value
   install -d -m 0700 "$DIR" "$DIR/.docker"
   exec 9>"$DIR/deploy.lock"
   flock -n 9 || die "another PoC deploy is in progress"
+  systemctl is-active --quiet team11-call-expiry-20261121.timer || die "demo expiry timer is not armed"
+  [ "$(date +%s)" -lt "$(date -u -d '2026-11-21 16:55:00 UTC' +%s)" ] || die "demo admission window has closed"
+  install -d -o 65532 -g 65532 -m 0700 "$DIR/state"
   trap 'rm -f "$DIR/poc.env.new"' EXIT
   export DOCKER_CONFIG="$DIR/.docker" # this ECR login must not replace the main app's
 
@@ -71,10 +71,8 @@ deploy() {
   for name in $PARAMS; do
     value=$(get_param "$name") || die "cannot read SSM parameter /$project/connect-web-call/$name"
     case "$value" in "" | None | *$'\n'* | *$'\r'*) die "SSM parameter $name is empty or not a single line" ;; esac
-    case "$name" in WIDGET_ID) widget=$value ;; WIDGET_SNIPPET_ID) snippet=$value ;; esac
     printf '%s=%s\n' "$name" "$value" >> "$DIR/poc.env.new"
   done
-  [ "$widget" != "$snippet" ] || die "WIDGET_ID equals WIDGET_SNIPPET_ID: the snippet ID is not the JWT subject"
   mv -f "$DIR/poc.env.new" "$DIR/poc.env"
 
   printf 'IMAGE=%s\n' "$image" > "$DIR/.env" # the only interpolated value, and not secret
@@ -83,6 +81,12 @@ deploy() {
     die "ECR login failed"
   cd "$DIR"
   docker compose -p "$PROJECT_NAME" pull --quiet
+  # Stop the endpoint before running the recovery-only hangup command against its durable state.
+  local unit=team11-call-expiry-20261121.service
+  install -d -m0755 "/etc/systemd/system/$unit.d"
+  install -m0644 "$src/voice-expiry.conf" "/etc/systemd/system/$unit.d/voice-expiry.conf"
+  systemctl daemon-reload
+  systemctl is-active --quiet team11-call-expiry-20261121.timer || die "expiry timer is no longer active"
   docker compose -p "$PROJECT_NAME" up -d --wait --wait-timeout 120 || die "the PoC container did not become healthy"
 }
 

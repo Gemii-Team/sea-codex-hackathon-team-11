@@ -1,46 +1,51 @@
-// connect-web-call origin: serves the static page and issues Amazon Connect widget JWTs.
+// Voice-call origin: serves the static page and brokers one OpenAI Realtime WebRTC call.
 //
-//   GET  /healthz           readiness, unauthenticated, no secrets
-//   GET  /, /call.js, ...   static page (team Basic auth)
-//   GET  /api/widget-config public widget fields only (team Basic auth)
-//   POST /api/widget-token  200 {"data":"<jwt>"} (team Basic auth + exact same-origin + rate limit)
+//   GET  /healthz                      readiness, unauthenticated, no secrets
+//   GET  /, /index.html, /styles.css, /call.js   static page (team Basic auth)
+//   POST /api/voice/calls              body application/sdp (browser offer)
+//                                      201 application/sdp (answer) + X-Voice-Call-ID
+//   POST /api/voice/calls/{id}/hangup  no body; 204 (idempotent)
 //
-// No dependencies. Secrets stay in memory: they are never written to a response, a log line or
-// an error message. This process never redirects, and sets no CORS headers, so a token cannot be
-// obtained cross-origin.
+// Both POSTs need team Basic auth and the exact same origin. No dependencies. The API key
+// lives only inside the provider (./realtime.mjs); the browser can neither see it nor choose
+// session settings. SDP and credentials are never logged. No redirects, no CORS headers.
 import http from 'node:http';
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
-import { ConfigError, loadConfig, publicWidgetConfig } from './config.mjs';
-import { signWidgetToken } from './jwt.mjs';
+import { ConfigError, loadConfig } from './config.mjs';
+import { createVoiceProvider, isValidCallId } from './realtime.mjs';
 
 const USERNAME = 'team';
-export const TOKEN_LIMIT = 6; // tokens per window, across the whole process
-export const TOKEN_WINDOW_MS = 60_000;
 const REALM = 'Team 11 Connect call';
-const TOKEN_PATH = '/api/widget-token';
-const CONFIG_PATH = '/api/widget-config';
+const START_PATH = '/api/voice/calls';
+const HANGUP_PATH = /^\/api\/voice\/calls\/([^/]+)\/hangup$/;
+export const MAX_BODY_BYTES = 32 * 1024;
+// Error codes the browser may see; anything else collapses to upstream_error.
+const SAFE_ERRORS = new Set([
+  'invalid_offer', 'invalid_call_id', 'voice_closed', 'busy', 'quota_exhausted', 'shutting_down',
+  'not_configured', 'state_unavailable', 'unknown_call', 'upstream_unavailable', 'upstream_error',
+  'upstream_rejected', 'upstream_no_call_id', 'upstream_bad_answer', 'hangup_failed',
+]);
+const SAFE_STATUS = new Set([400, 403, 404, 429, 502, 503]);
 
 const FRONTEND_DIR = new URL('../frontend/', import.meta.url);
 const ASSET_FILES = [
   ['/', 'index.html', 'text/html; charset=utf-8'],
   ['/index.html', 'index.html', 'text/html; charset=utf-8'],
   ['/call.js', 'call.js', 'text/javascript; charset=utf-8'],
-  ['/widget.mjs', 'widget.mjs', 'text/javascript; charset=utf-8'],
   ['/styles.css', 'styles.css', 'text/css; charset=utf-8'],
 ];
 
-// frame-ancestors/base-uri/form-action/object-src only. script-src and connect-src are
-// deliberately not pinned: the AWS widget iframe inherits this page's policy (see the `nonce`
-// snippet field) and the live widget's needs cannot be verified offline. The executable URL is
-// pinned in code instead (parseWidgetScriptUrl). Referrer stays origin-only so the widget can
-// still see which site embeds it for its domain allowlist.
+// The page needs microphone access and an outbound WebRTC connection only; fetches stay same-origin.
 const COMMON_HEADERS = Object.freeze({
   'Cache-Control': 'no-store',
-  'Content-Security-Policy': "frame-ancestors 'none'; base-uri 'none'; form-action 'none'; object-src 'none'",
+  'Content-Security-Policy':
+    "default-src 'self'; connect-src 'self'; media-src 'self' blob:; img-src 'self' data:; style-src 'self'; " +
+    "frame-ancestors 'none'; base-uri 'none'; form-action 'none'; object-src 'none'",
   'Cross-Origin-Resource-Policy': 'same-origin',
-  'Referrer-Policy': 'strict-origin-when-cross-origin',
+  'Permissions-Policy': 'microphone=(self)',
+  'Referrer-Policy': 'no-referrer',
   'X-Content-Type-Options': 'nosniff',
   'X-Frame-Options': 'DENY',
 });
@@ -52,46 +57,72 @@ const UNAUTHORIZED_HTML =
 const sha256 = (text) => createHash('sha256').update(text).digest();
 const safeEqual = (a, b) => timingSafeEqual(sha256(a), sha256(b));
 
-/** At most `limit` hits per sliding `windowMs`. */
-class SlidingWindowLimiter {
-  #hits = [];
-
-  constructor(limit, windowMs) {
-    this.limit = limit;
-    this.windowMs = windowMs;
-  }
-
-  take(nowMs) {
-    while (this.#hits.length > 0 && this.#hits[0] <= nowMs - this.windowMs) this.#hits.shift();
-    if (this.#hits.length >= this.limit) {
-      const retryAfterMs = this.#hits[0] + this.windowMs - nowMs;
-      return { ok: false, retryAfterSeconds: Math.max(1, Math.ceil(retryAfterMs / 1000)) };
-    }
-    this.#hits.push(nowMs);
-    return { ok: true };
-  }
-}
-
-function loadAssets() {
-  return new Map(
-    ASSET_FILES.map(([path, file, type]) => [path, { type, body: readFileSync(new URL(file, FRONTEND_DIR)) }]),
-  );
+/**
+ * True for a browser offer we are willing to forward: printable ASCII lines of `x=value`,
+ * starting with v=0, exactly one audio section and at most one SCTP data-channel section
+ * (the Realtime events channel). Video and every other media type are refused.
+ */
+export function isAudioOnlyOffer(sdp) {
+  if (typeof sdp !== 'string' || sdp.length === 0 || sdp.length > MAX_BODY_BYTES) return false;
+  if (!/^[\x20-\x7e\r\n]+$/.test(sdp)) return false;
+  const lines = sdp.split(/\r?\n/);
+  if (lines[lines.length - 1] === '') lines.pop();
+  if (lines[0] !== 'v=0') return false;
+  if (!lines.every((line) => /^[a-z]=/.test(line))) return false;
+  const media = lines.filter((line) => line.startsWith('m='));
+  const audio = media.filter((line) => /^m=audio [0-9]+ [A-Z/]+ /.test(line));
+  const events = media.filter((line) => /^m=application [0-9]+ (?:UDP\/DTLS\/SCTP|UDP\/TLS\/SCTP|DTLS\/SCTP) webrtc-datachannel$/.test(line));
+  return audio.length === 1 && events.length <= 1 && audio.length + events.length === media.length;
 }
 
 const defaultLog = (entry) => process.stdout.write(`${JSON.stringify({ ts: new Date().toISOString(), ...entry })}\n`);
 
 function routeLabel(pathname) {
   if (pathname === '/healthz') return 'health';
-  if (pathname === TOKEN_PATH) return 'token';
-  if (pathname === CONFIG_PATH) return 'config';
-  return pathname === '/' || ASSET_FILES.some(([path]) => path === pathname) ? 'static' : 'other';
+  if (pathname === START_PATH) return 'start';
+  if (HANGUP_PATH.test(pathname)) return 'hangup';
+  return ASSET_FILES.some(([path]) => path === pathname) ? 'static' : 'other';
 }
 
-/** Builds (does not start) the HTTP server. `now` and `log` are injectable for tests. */
-export function createServer(config, { now = Date.now, log = defaultLog } = {}) {
-  const assets = loadAssets();
-  const limiter = new SlidingWindowLimiter(TOKEN_LIMIT, TOKEN_WINDOW_MS);
-  const widgetConfigJson = JSON.stringify(publicWidgetConfig(config));
+class BodyTooLarge extends Error {}
+
+function readBody(req, limit) {
+  return new Promise((resolve, reject) => {
+    const declared = req.headers['content-length'];
+    if (declared !== undefined && Number(declared) > limit) {
+      reject(new BodyTooLarge());
+      return;
+    }
+    const chunks = [];
+    let size = 0;
+    req.on('data', (chunk) => {
+      size += chunk.length;
+      if (size > limit) {
+        reject(new BodyTooLarge());
+        req.removeAllListeners('data');
+        req.resume();
+        return;
+      }
+      chunks.push(chunk);
+    });
+    req.on('end', () => resolve(Buffer.concat(chunks)));
+    req.on('error', reject);
+    req.on('aborted', () => reject(new Error('aborted')));
+  });
+}
+
+/**
+ * Builds (does not start) the HTTP server. `provider` is {start(sdp), hangup(id), shutdown()}
+ * from createVoiceProvider; tests inject a fake. The returned server has `drain()`, which
+ * refuses new calls, waits for calls being created, then asks the provider to close everything.
+ */
+export function createServer(config, { provider, log = defaultLog } = {}) {
+  if (!provider) throw new TypeError('createServer requires a provider');
+  const assets = new Map(
+    ASSET_FILES.map(([path, file, type]) => [path, { type, body: readFileSync(new URL(file, FRONTEND_DIR)) }]),
+  );
+  const creating = new Set();
+  let draining = false;
 
   function send(req, res, status, type, body, extra = {}) {
     const payload = Buffer.from(body);
@@ -124,39 +155,109 @@ export function createServer(config, { now = Date.now, log = defaultLog } = {}) 
     return sendJson(req, res, 401, { error: 'unauthorized' }, challenge);
   }
 
-  const methodNotAllowed = (req, res, allow) => sendJson(req, res, 405, { error: 'method_not_allowed' }, { Allow: allow });
+  const methodNotAllowed = (req, res, allow) =>
+    sendJson(req, res, 405, { error: 'method_not_allowed' }, { Allow: allow });
 
-  // The browser always sends Origin on a same-origin POST. Missing, `null`, or any other value
-  // (different scheme, host, port, or a look-alike prefix) is refused.
+  // A browser always sends Origin on a same-origin POST. Missing, `null`, or any other value
+  // (different scheme, host, port, or a look-alike prefix) is refused. Sec-Fetch-Site, when
+  // present, must say same-origin.
   function originAllowed(req) {
     if (req.headers.origin !== config.publicOrigin) return false;
     const site = req.headers['sec-fetch-site'];
     return site === undefined || site === 'same-origin';
   }
 
-  const hasBody = (req) => {
-    const length = req.headers['content-length'];
-    return req.headers['transfer-encoding'] !== undefined || (length !== undefined && length !== '0');
-  };
+  function providerFailure(req, res, error, what) {
+    // Only an allowlisted code and status are mirrored, never the provider's message or body.
+    const code = typeof error?.code === 'string' && SAFE_ERRORS.has(error.code) ? error.code : 'upstream_error';
+    const status = Number.isInteger(error?.status) && SAFE_STATUS.has(error.status) ? error.status : 502;
+    log({ level: 'error', msg: `${what} failed`, status, code, error: error?.name ?? 'Error' });
+    return sendJson(req, res, status, { error: code });
+  }
 
-  function tokenRoute(req, res) {
+  async function hangupQuietly(id) {
+    try {
+      await provider.hangup(id);
+    } catch (error) {
+      log({ level: 'error', msg: 'cleanup hangup failed', error: error?.name ?? 'Error' });
+    }
+  }
+
+  async function startRoute(req, res) {
     if (req.method !== 'POST') return methodNotAllowed(req, res, 'POST');
     if (!originAllowed(req)) return sendJson(req, res, 403, { error: 'origin_not_allowed' });
-    if (hasBody(req)) return sendJson(req, res, 413, { error: 'body_not_allowed' });
-    // Only requests that would otherwise receive a token count against the limit, so failed
-    // sign-ins cannot be used to lock the team out.
-    const nowMs = now();
-    const verdict = limiter.take(nowMs);
-    if (!verdict.ok) {
-      return sendJson(req, res, 429, { error: 'rate_limited' }, { 'Retry-After': String(verdict.retryAfterSeconds) });
+    const type = String(req.headers['content-type'] ?? '').trim().toLowerCase();
+    if (type !== 'application/sdp') return sendJson(req, res, 415, { error: 'unsupported_media_type' });
+    let sdp;
+    try {
+      sdp = (await readBody(req, MAX_BODY_BYTES)).toString('latin1');
+    } catch (error) {
+      if (error instanceof BodyTooLarge) return sendJson(req, res, 413, { error: 'body_too_large' }, { Connection: 'close' });
+      return res.destroy();
     }
-    const token = signWidgetToken({
-      widgetId: config.widget.id,
-      signingKey: config.signingKey,
-      nowSeconds: Math.floor(nowMs / 1000),
+    if (!isAudioOnlyOffer(sdp)) return sendJson(req, res, 400, { error: 'invalid_offer' });
+    if (draining) return sendJson(req, res, 503, { error: 'unavailable' });
+
+    // `delivered` flips only when the whole response was flushed. If the browser leaves first
+    // (close without finish), the call that was just created is hung up at once.
+    let result;
+    let delivered = false;
+    res.on('finish', () => {
+      delivered = true;
     });
-    log({ level: 'info', msg: 'widget token issued' });
-    return sendJson(req, res, 200, { data: token });
+    res.on('close', () => {
+      if (!delivered && result) void hangupQuietly(result.id);
+    });
+    const attempt = (async () => {
+      try {
+        const answer = await provider.start(sdp);
+        const id = answer?.id;
+        const answerSdp = answer?.sdp;
+        if (!isValidCallId(id) || typeof answerSdp !== 'string' || answerSdp === '') {
+          if (isValidCallId(id)) await hangupQuietly(id);
+          throw new Error('provider returned an unusable answer');
+        }
+        result = { id, sdp: answerSdp };
+      } catch (error) {
+        return { error };
+      }
+      return {};
+    })();
+    creating.add(attempt);
+    let outcome;
+    try {
+      outcome = await attempt;
+    } finally {
+      creating.delete(attempt);
+    }
+    if (outcome.error) return providerFailure(req, res, outcome.error, 'call start');
+    if (res.destroyed) {
+      // Browser already gone: the close handler could not see `result` yet if it fired earlier.
+      await hangupQuietly(result.id);
+      return undefined;
+    }
+    if (draining) return sendJson(req, res, 503, { error: 'shutting_down' });
+    log({ level: 'info', msg: 'call started' });
+    return send(req, res, 201, 'application/sdp', result.sdp, { 'X-Voice-Call-ID': result.id });
+  }
+
+  async function hangupRoute(req, res, id) {
+    if (req.method !== 'POST') return methodNotAllowed(req, res, 'POST');
+    if (!originAllowed(req)) return sendJson(req, res, 403, { error: 'origin_not_allowed' });
+    const length = req.headers['content-length'];
+    if (req.headers['transfer-encoding'] !== undefined || (length !== undefined && length !== '0')) {
+      return sendJson(req, res, 413, { error: 'body_not_allowed' }, { Connection: 'close' });
+    }
+    if (!isValidCallId(id)) return sendJson(req, res, 400, { error: 'invalid_call_id' });
+    try {
+      await provider.hangup(id);
+    } catch (error) {
+      // A bounded call may already have ended through the server timer.
+      if (error?.code !== 'unknown_call') return providerFailure(req, res, error, 'hangup');
+    }
+    log({ level: 'info', msg: 'call hung up' });
+    res.writeHead(204, COMMON_HEADERS);
+    return res.end();
   }
 
   function dispatch(req, res, pathname) {
@@ -165,29 +266,26 @@ export function createServer(config, { now = Date.now, log = defaultLog } = {}) 
       return sendJson(req, res, 200, { status: 'ok' });
     }
     if (!isAuthorized(req)) return unauthorized(req, res);
-    if (pathname === TOKEN_PATH) return tokenRoute(req, res);
-    const isGetOrHead = req.method === 'GET' || req.method === 'HEAD';
-    if (pathname === CONFIG_PATH) {
-      if (!isGetOrHead) return methodNotAllowed(req, res, 'GET, HEAD');
-      return send(req, res, 200, 'application/json; charset=utf-8', widgetConfigJson);
-    }
+    if (pathname === START_PATH) return startRoute(req, res);
+    const hangup = HANGUP_PATH.exec(pathname);
+    if (hangup) return hangupRoute(req, res, hangup[1]);
     const asset = assets.get(pathname);
     if (asset) {
-      if (!isGetOrHead) return methodNotAllowed(req, res, 'GET, HEAD');
+      if (req.method !== 'GET' && req.method !== 'HEAD') return methodNotAllowed(req, res, 'GET, HEAD');
       return send(req, res, 200, asset.type, asset.body);
     }
     return sendJson(req, res, 404, { error: 'not_found' });
   }
 
-  function handle(req, res) {
+  async function handle(req, res) {
     const started = process.hrtime.bigint();
     const target = req.url ?? '';
     // Only origin-form targets ("/path"); no pathname decoding, so nothing can traverse.
-    const bad = target[0] !== '/';
+    const bad = target[0] !== '/' || target[1] === '/';
     const query = target.indexOf('?');
     const pathname = bad ? '' : query === -1 ? target : target.slice(0, query);
     const route = bad ? 'invalid' : routeLabel(pathname);
-    res.on('finish', () =>
+    res.on('close', () =>
       log({
         level: 'info',
         msg: 'request',
@@ -199,7 +297,7 @@ export function createServer(config, { now = Date.now, log = defaultLog } = {}) 
     );
     try {
       if (bad) return sendJson(req, res, 400, { error: 'bad_request' }, { Connection: 'close' });
-      return dispatch(req, res, pathname);
+      return await dispatch(req, res, pathname);
     } catch (error) {
       log({ level: 'error', msg: 'request failed', error: error?.name ?? 'Error' });
       if (!res.headersSent) return sendJson(req, res, 500, { error: 'internal_error' }, { Connection: 'close' });
@@ -209,16 +307,24 @@ export function createServer(config, { now = Date.now, log = defaultLog } = {}) 
 
   const server = http.createServer({ maxHeaderSize: 8192 }, handle);
   server.headersTimeout = 15_000;
-  server.requestTimeout = 15_000;
+  server.requestTimeout = 30_000; // the upstream answer can take a few seconds
   server.keepAliveTimeout = 5_000;
   server.on('clientError', (_error, socket) => {
     if (socket.writable) socket.end('HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\nConnection: close\r\n\r\n');
     else socket.destroy();
   });
+  server.drain = async () => {
+    draining = true;
+    await Promise.allSettled([...creating]);
+    const outcome = await provider.shutdown();
+    const hungUp = outcome?.hungUp === true;
+    const uncertain = outcome?.uncertain === true;
+    return { hungUp, uncertain, clean: hungUp && !uncertain };
+  };
   return server;
 }
 
-export function main(env = process.env) {
+export async function main(env = process.env) {
   let config;
   try {
     config = loadConfig(env);
@@ -229,20 +335,41 @@ export function main(env = process.env) {
     process.exitCode = 1;
     return undefined;
   }
-  const server = createServer(config);
-  server.listen(config.port, config.host, () => {
-    defaultLog({ level: 'info', msg: 'listening', port: config.port, origin: config.publicOrigin });
+  const provider = createVoiceProvider({
+    apiKey: config.apiKey, cutoffAt: config.cutoffAt, stateDir: config.stateDir,
+    log: (msg) => defaultLog({ level: 'warn', msg }),
   });
-  const shutdown = (signal) => {
+  const server = createServer(config, { provider });
+  server.listen(config.port, config.host, () => {
+    defaultLog({ level: 'info', msg: 'listening', port: config.port, origin: config.publicOrigin, cutoffAt: config.cutoffAt });
+  });
+  let stopping = false;
+  const shutdown = async (signal) => {
+    if (stopping) return;
+    stopping = true;
     defaultLog({ level: 'info', msg: 'shutting down', signal });
-    server.close(() => process.exit(0));
+    const hardStop = setTimeout(() => process.exit(1), 15_000);
+    hardStop.unref();
+    server.close();
     server.closeIdleConnections();
-    setTimeout(() => server.closeAllConnections(), 2_000).unref();
-    setTimeout(() => process.exit(1), 5_000).unref();
+    let code = 0;
+    try {
+      const outcome = await server.drain();
+      // An unconfirmed hangup of a known call, or an id-less reservation, is not a clean exit.
+      if (!outcome.clean) {
+        defaultLog({ level: 'error', msg: 'shutdown unconfirmed', hungUp: outcome.hungUp, uncertain: outcome.uncertain });
+        code = 1;
+      }
+    } catch (error) {
+      defaultLog({ level: 'error', msg: 'shutdown failed', error: error?.name ?? 'Error' });
+      code = 1;
+    }
+    server.closeAllConnections();
+    process.exit(code);
   };
-  process.once('SIGTERM', () => shutdown('SIGTERM'));
-  process.once('SIGINT', () => shutdown('SIGINT'));
+  process.once('SIGTERM', () => void shutdown('SIGTERM'));
+  process.once('SIGINT', () => void shutdown('SIGINT'));
   return server;
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) main();
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) await main();

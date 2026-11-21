@@ -1,16 +1,5 @@
-# Connect web-call PoC. connect-web-call/deploy/deploy sends this file to /opt/connect-web-call on
-# the existing server through SSM; remote-deploy.sh starts it. It is never part of the main app's
-# stack (project sea-hackathon in /opt/app), so a main rollout cannot stop it and it cannot
-# replace `app`.
-#
-# - The service is named connect-web-call itself, never `app`: a second service called `app`
-#   would register the same Docker DNS name on the shared bridge even under another alias.
-# - Only IMAGE is interpolated, from .env, and it is not secret. The five PoC parameters from SSM
-#   are written by remote-deploy.sh to poc.env (mode 0600, root) and read as format: raw, so no
-#   value is interpolated, unquoted or expanded. Never reference a PoC parameter with dollar
-#   syntax here, and never run `docker compose config` on the host without --services: it prints
-#   env_file values.
-# - No ports are published. cloudflared on the shared network reaches connect-web-call:8080.
+# Keep the original Compose project and DNS service names so this cutover does not touch the main app.
+# Both secrets are read as raw values on the host; do not print `docker compose config` on EC2.
 name: sea-connect-web-call
 
 services:
@@ -24,10 +13,15 @@ services:
       NODE_ENV: production
       PORT: "8080"
       PUBLIC_ORIGIN: https://call-sea-hackathon.voidbox.io
+      VOICE_CUTOFF_AT: "2026-11-21T16:59:00Z"
+      VOICE_STATE_DIR: /var/lib/team-voice
     expose:
       - "8080"
     networks: [edge]
-    restart: unless-stopped
+    restart: "no"
+    stop_grace_period: 30s
+    volumes:
+      - ./state:/var/lib/team-voice
     read_only: true
     tmpfs:
       - /tmp

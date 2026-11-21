@@ -1,131 +1,213 @@
-// Page glue for the AWS-managed Amazon Connect web-calling widget. All decisions that matter
-// (URL validation, the documented snippet, the token callback) live in widget.mjs.
-//
-// Nothing here starts a call or reports one as connected. The only claims this page makes are
-// about things it observed itself: configuration loaded, widget script loaded, a token request
-// succeeded or failed.
-import { createAuthenticate, fetchWidgetConfig, installWidgetLoader } from './widget.mjs';
+// Direct OpenAI Realtime voice page. Mic is requested only on "Start call".
+// No keys here: the server exchanges the SDP offer with OpenAI.
+const MAX_CALL_MS = 180_000;
+const ICE_WAIT_MS = 3_000;
+const START_TIMEOUT_MS = 30_000;
+const CALL_ID = /^[A-Za-z0-9_-]{1,128}$/;
 
-const byId = (id) => document.getElementById(id);
-const statusEl = byId('widget-status');
-const errorEl = byId('widget-error');
-const reloadButton = byId('reload');
-const attemptsEl = byId('attempts');
+const $ = (id) => document.getElementById(id);
+const startBtn = $('start');
+const endBtn = $('end');
+const speakerBtn = $('speaker');
+const statusEl = $('status');
+const detailEl = $('detail');
+const audio = $('remote');
 
-reloadButton.addEventListener('click', () => window.location.reload());
+let session = null; // the single active attempt
 
-function setStatus(state, message) {
+function setStatus(state, text, detail = '') {
   statusEl.dataset.state = state;
-  statusEl.textContent = message;
+  statusEl.textContent = text;
+  detailEl.textContent = detail;
+  detailEl.hidden = !detail;
 }
 
-function showError(message) {
-  errorEl.textContent = message;
-  errorEl.hidden = false;
-  reloadButton.hidden = false;
+function busy(on) {
+  startBtn.disabled = on;
+  endBtn.disabled = !on;
 }
 
-function clearError() {
-  errorEl.textContent = '';
-  errorEl.hidden = true;
+function hangup(callId, keepalive = false) {
+  if (!callId || !CALL_ID.test(callId)) return Promise.resolve(false);
+  return fetch(`/api/voice/calls/${encodeURIComponent(callId)}/hangup`, {
+    method: 'POST',
+    credentials: 'same-origin',
+    keepalive,
+  }).then((r) => r.status === 204, () => false);
 }
 
-const utc = (date) => date.toISOString().replace(/\.\d{3}Z$/, 'Z');
-
-function logAttempt(at, text) {
-  byId('attempts-empty')?.remove();
-  const item = document.createElement('li');
-  const time = document.createElement('time');
-  time.dateTime = at.toISOString();
-  time.textContent = utc(at);
-  item.append(time, ` \u2014 ${text}`);
-  attemptsEl.prepend(item);
-  while (attemptsEl.children.length > 10) attemptsEl.lastElementChild.remove();
+function release(s) {
+  clearTimeout(s.timer);
+  clearTimeout(s.startTimer);
+  try { s.channel?.close(); } catch {}
+  try { s.pc?.close(); } catch {}
+  s.stream?.getTracks().forEach((t) => t.stop());
+  audio.srcObject = null;
+  speakerBtn.hidden = true;
 }
 
-function onTokenEvent(event) {
-  if (event.type === 'token-requested') {
-    logAttempt(event.at, 'asked for a call token\u2026');
-    setStatus('working', 'Requesting a call token\u2026');
-  } else if (event.type === 'token-issued') {
-    logAttempt(event.at, 'token issued and handed to the widget.');
-    clearError();
-    setStatus(
-      'working',
-      `Call token issued at ${utc(event.at)} UTC and handed to the widget. Use the call controls to start or continue the call. ` +
-        'A token does not show that a call or audio is active: listen for the greeting.',
-    );
-  } else {
-    logAttempt(event.at, `token request failed${event.status ? ` (HTTP ${event.status})` : ''}.`);
-    setStatus('error', 'Could not get a call token.');
-    showError(event.message);
+// Ends the session once: releases devices, hangs up upstream if a call exists.
+async function end(s, state, text, detail = '') {
+  if (s.ended) return;
+  s.ended = true;
+  if (session === s) session = null;
+  release(s);
+  busy(false);
+  setStatus(state, text, detail);
+  if (s.callId) {
+    const ok = await hangup(s.callId);
+    if (!ok && !session && statusEl.dataset.state !== 'error') {
+      setStatus(state, text, 'Your microphone is off. The server could not confirm hang-up yet.');
+    }
   }
 }
 
-const MIC_TEXT = {
-  granted: 'Microphone: allowed for this site.',
-  denied: 'Microphone: blocked for this site. Follow the steps below, then reload.',
-  prompt: 'Microphone: your browser will ask when the call starts.',
+function waitForIce(pc) {
+  if (pc.iceGatheringState === 'complete') return Promise.resolve();
+  return new Promise((resolve) => {
+    const done = () => { clearTimeout(t); pc.removeEventListener('icegatheringstatechange', check); resolve(); };
+    const check = () => { if (pc.iceGatheringState === 'complete') done(); };
+    const t = setTimeout(done, ICE_WAIT_MS);
+    pc.addEventListener('icegatheringstatechange', check);
+  });
+}
+
+function micMessage(err) {
+  switch (err?.name) {
+    case 'NotAllowedError':
+    case 'SecurityError':
+      return 'Microphone permission was denied. Allow the microphone in your browser and try again.';
+    case 'NotFoundError':
+    case 'OverconstrainedError':
+      return 'No microphone was found. Connect one and try again.';
+    case 'NotReadableError':
+    case 'AbortError':
+      return 'The microphone is busy or unavailable. Close other apps using it and try again.';
+    default:
+      return 'Could not open the microphone.';
+  }
+}
+
+const START_ERRORS = {
+  401: 'Sign-in is required to start a call.',
+  403: 'This request was not allowed.',
+  busy: 'Another call is active or being closed. Try again in a minute.',
+  quota_exhausted: 'The demo has used its 25 call attempts.',
+  voice_closed: 'The demo window has closed. No new calls can start.',
+  429: 'Call limit reached for this demo.',
+  503: 'The voice demo is unavailable right now or the demo window has closed.',
 };
 
-async function watchMicrophone() {
-  const el = byId('mic-status');
-  if (!window.isSecureContext || !navigator.mediaDevices) {
-    el.textContent = 'Microphone unavailable: open this page over HTTPS (or localhost) to make a call.';
-    return;
-  }
+function playRemote() {
+  audio.play().then(() => { speakerBtn.hidden = true; }, () => { speakerBtn.hidden = false; });
+}
+
+async function start() {
+  if (session) return;
+  const s = { ended: false, callId: '' };
+  session = s;
+  busy(true);
+  setStatus('connecting', 'Connecting… allow the microphone when asked.');
+
   try {
-    const permission = await navigator.permissions.query({ name: 'microphone' });
-    const render = () => {
-      el.textContent = MIC_TEXT[permission.state] ?? 'Microphone: your browser will ask when the call starts.';
+    if (!navigator.mediaDevices?.getUserMedia || !window.RTCPeerConnection) {
+      throw Object.assign(new Error('unsupported'), { unsupported: true });
+    }
+    s.stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    if (s.ended) return release(s);
+
+    const pc = (s.pc = new RTCPeerConnection());
+    for (const track of s.stream.getAudioTracks()) {
+      pc.addTrack(track, s.stream);
+      track.onended = () => end(s, 'error', 'Microphone disconnected.', 'The call was ended because the microphone stopped.');
+    }
+    pc.ontrack = (e) => { audio.srcObject = e.streams[0] ?? new MediaStream([e.track]); playRemote(); };
+    pc.onconnectionstatechange = () => {
+      if (['failed', 'closed', 'disconnected'].includes(pc.connectionState)) {
+        end(s, s.opened ? 'ended' : 'error', s.opened ? 'Call ended: connection lost.' : 'Connection failed.',
+          s.opened ? '' : 'Check your network and try again.');
+      }
     };
-    render();
-    permission.addEventListener('change', render);
-  } catch {
-    el.textContent = 'Microphone: your browser will ask when the call starts.';
-  }
-}
 
-async function main() {
-  watchMicrophone();
-  const request = window.fetch.bind(window);
+    const channel = (s.channel = pc.createDataChannel('oai-events'));
+    channel.onopen = () => {
+      if (s.ended) return;
+      s.opened = true;
+      clearTimeout(s.startTimer);
+      setStatus('live', 'Live — speak Thai now. Up to 3 minutes.');
+      channel.send(JSON.stringify({ type: 'response.create' }));
+    };
+    channel.onclose = () => { if (s.opened) end(s, 'ended', 'Call ended.'); };
+    channel.onmessage = ({ data }) => {
+      try {
+        if (JSON.parse(data).type === 'error') end(s, 'error', 'OpenAI reported an error.', 'The call was ended.');
+      } catch {}
+    };
 
-  let config;
-  try {
-    config = await fetchWidgetConfig(request);
-  } catch (error) {
-    setStatus('error', 'The call widget is not available.');
-    showError(error.message);
-    return;
-  }
+    await pc.setLocalDescription(await pc.createOffer());
+    await waitForIce(pc);
+    if (s.ended) return release(s);
 
-  const host = new URL(config.scriptUrl).host;
-  setStatus('pending', `Loading the Amazon Connect widget from ${host}\u2026`);
-  try {
-    installWidgetLoader({
-      window,
-      document,
-      config,
-      authenticate: createAuthenticate({ fetch: request, onEvent: onTokenEvent }),
-      // `load` only means the loader script was fetched and ran, not that the widget is available.
-      onLoad: () =>
-        setStatus(
-          'pending',
-          'Widget script loaded. Call controls appear in the lower right; use them to start the call. If they don\u2019t appear, reload this page, ' +
-            'turn off content blockers, and ask the team to check that this site\u2019s address is on the widget\u2019s allowed domain list.',
-        ),
-      onError: () => {
-        setStatus('error', 'The Amazon Connect widget script did not load.');
-        showError(
-          `The widget script could not be loaded from ${host}. Check your connection and content blockers, ` +
-            'then reload this page.',
-        );
-      },
+    s.timer = setTimeout(() => end(s, 'ended', 'Call ended: 3-minute limit reached.'), MAX_CALL_MS);
+    s.startTimer = setTimeout(
+      () => { if (!s.opened) end(s, 'error', 'Timed out connecting.', 'Press Start call to try again.'); },
+      START_TIMEOUT_MS,
+    );
+
+    // Single paid start request; never retried. Not aborted on cancel so the
+    // call id can still be hung up when the response arrives.
+    const res = await fetch('/api/voice/calls', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/sdp' },
+      body: pc.localDescription.sdp,
     });
-  } catch (error) {
-    setStatus('error', 'The call widget is not available.');
-    showError(error.message);
+    if (!res.ok) {
+      const code = (await res.json().catch(() => ({}))).error;
+      throw Object.assign(new Error('start'), { http: res.status, code });
+    }
+    const id = res.headers.get('X-Voice-Call-ID') || '';
+    const answer = await res.text();
+    if (CALL_ID.test(id)) s.callId = id;
+    if (s.ended) { await hangup(s.callId); return; }
+    if (!s.callId || !answer.startsWith('v=0')) throw new Error('bad-answer');
+    await pc.setRemoteDescription({ type: 'answer', sdp: answer });
+    if (!s.opened) setStatus('connecting', 'Connecting audio…');
+  } catch (err) {
+    if (s.ended) return;
+    let text = 'Could not start the call.';
+    let detail = 'Press Start call to try again.';
+    if (err?.unsupported) {
+      text = 'This browser does not support voice calls.';
+      detail = 'Use a recent Chrome, Edge, Firefox or Safari.';
+    } else if (err?.http) {
+      text = START_ERRORS[err.code] ?? START_ERRORS[err.http] ?? `The server could not start the call (${err.http}).`;
+      detail = '';
+    } else if (!s.stream) {
+      text = micMessage(err);
+      detail = '';
+    }
+    end(s, 'error', text, detail);
   }
 }
 
-main();
+startBtn.addEventListener('click', start);
+endBtn.addEventListener('click', () => {
+  const s = session;
+  if (!s) return;
+  setStatus('connecting', 'Ending call…');
+  end(s, 'ended', s.opened || s.callId ? 'Call ended.' : 'Call cancelled.');
+});
+speakerBtn.addEventListener('click', playRemote);
+
+// pagehide (not visibilitychange: switching tabs must not hang up).
+window.addEventListener('pagehide', () => {
+  const s = session;
+  if (!s || s.ended) return;
+  s.ended = true;
+  session = null;
+  busy(false);
+  setStatus('ended', 'Call ended.');
+  release(s);
+  void hangup(s.callId, true);
+});

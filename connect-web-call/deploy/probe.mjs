@@ -1,7 +1,4 @@
-// Origin probe, piped by remote-deploy.sh into a throwaway container of the PoC image on the
-// shared Docker network: it reaches app:8080 and connect-web-call:8080 by the same names and over
-// the same bridge as cloudflared. DEMO_PASSWORD arrives in the environment only and is never
-// printed. One PASS/FAIL line per check (status codes and a content hash only); exit 1 on any FAIL.
+// Probe from the same Docker bridge as the tunnel. None of these requests can start a paid call.
 import { createHash } from 'node:crypto';
 
 const MAIN = 'http://app:8080';
@@ -14,17 +11,17 @@ if (!password) {
 }
 const basic = (pw) => ({ authorization: `Basic ${Buffer.from(`team:${pw}`).toString('base64')}` });
 const wrong = basic(`${password}-wrong`);
-const tokenUrl = `${POC}/api/widget-token`;
+const callsUrl = `${POC}/api/voice/calls`;
 
-// status: exact status expected (default any 2xx); challenge: needs a Basic challenge;
-// noToken: the body must not carry a token.
+// Compare an authenticated page marker as well as status; an obsolete widget page must not pass.
 const checks = [
   { name: 'main-origin', url: `${MAIN}/`, hash: true },
   { name: 'poc-anonymous', url: `${POC}/`, status: 401, challenge: true },
   { name: 'poc-wrong-password', url: `${POC}/`, headers: wrong, status: 401 },
-  { name: 'poc-authenticated', url: `${POC}/`, headers: basic(password), status: 200 },
-  { name: 'token-anonymous', url: tokenUrl, method: 'POST', headers: { origin: ORIGIN }, status: 401, noToken: true },
-  { name: 'token-wrong-password', url: tokenUrl, method: 'POST', headers: { origin: ORIGIN, ...wrong }, status: 401, noToken: true },
+  { name: 'poc-authenticated', url: `${POC}/`, headers: basic(password), status: 200, marker: 'OpenAI' },
+  { name: 'call-anonymous', url: callsUrl, method: 'POST', headers: { origin: ORIGIN }, status: 401 },
+  { name: 'call-wrong-password', url: callsUrl, method: 'POST', headers: { origin: ORIGIN, ...wrong }, status: 401 },
+  { name: 'call-wrong-origin', url: callsUrl, method: 'POST', headers: { origin: 'https://untrusted.invalid', ...basic(password) }, status: 403 },
 ];
 
 let failed = false;
@@ -35,7 +32,7 @@ for (const c of checks) {
     const ok =
       (c.status ? res.status === c.status : res.status >= 200 && res.status < 300) &&
       (!c.challenge || /^basic /i.test(res.headers.get('www-authenticate') ?? '')) &&
-      (!c.noToken || !body.includes('"data"'));
+      (!c.marker || body.includes(c.marker));
     failed ||= !ok;
     console.log(`${ok ? 'PASS' : 'FAIL'} ${c.name} status=${res.status}${c.hash ? ` sha256=${createHash('sha256').update(body).digest('hex')}` : ''}`);
   } catch (err) {

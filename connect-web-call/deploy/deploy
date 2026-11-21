@@ -2,7 +2,7 @@
 # Deploys and checks the Connect web-call PoC beside the main app. This is not
 # infra/hosting/bin/deploy (that one builds and restarts the main app). It touches only the PoC's
 # ECR repository and Compose project. Only non-secret values travel in the SSM command; the host
-# reads the five PoC parameters under /<project>/connect-web-call/ itself. No secret is ever a
+# reads the two PoC parameters under /<project>/connect-web-call/ itself. No secret is ever a
 # build argument or in argv. Run it from anywhere; it re-runs itself under the hosting wrapper
 # (connect-web-call/bin/with-aws hosting ...), which provides only hosting AWS and Cloudflare
 # credentials and ENV_FILE=/dev/null.
@@ -98,6 +98,7 @@ trap 'rm -rf "\$w"' EXIT
 echo '$(b64 remote-deploy.sh)' | base64 -d > "\$w/remote-deploy.sh"
 echo '$(b64 probe.mjs)' | base64 -d > "\$w/probe.mjs"
 echo '$(b64 compose.yml)' | base64 -d > "\$w/compose.yml"
+echo '$(b64 voice-expiry.conf)' | base64 -d > "\$w/voice-expiry.conf"
 bash "\$w/remote-deploy.sh"$args
 EOF
   jq -n --arg c "$script" '{commands: [$c], executionTimeout: ["900"]}' > "$tmp/params.json"
@@ -140,7 +141,7 @@ cmd_up() {
   digest="$(aws ecr describe-images --region "$region" --repository-name "$project/connect-web-call" \
     --image-ids "$id" --query 'imageDetails[0].imageDigest' --output text)" || die "$ref is not in the PoC repository"
   ssm_run up "$repo@$digest" "$project" "$region"
-  echo "origins verified before DNS; the route is a separate, reviewed plan (run: check, then plan-guard route)"
+  echo "Both origins checked; this command did not change DNS or place a call."
 }
 
 cmd_plan_guard() {

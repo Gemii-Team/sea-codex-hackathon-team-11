@@ -1,556 +1,497 @@
-// Tests for the connect-web-call origin. Run with:
+// Tests for the voice-call origin. Run with:
 //   node --test connect-web-call/backend/server.test.mjs
-// This also loads widget.test.mjs (the browser-side logic: widget URL allow-list, documented
-// snippet, token callback), so the one command above covers both halves.
-//
-// Everything is local: the server listens on 127.0.0.1 with fixture credentials. A fake token
-// response proves nothing about Amazon Connect; the live acceptance call is a separate step.
+// Everything is local and nonbillable: a fake provider replaces ./realtime.mjs and every
+// credential below is a fixture.
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createHmac } from 'node:crypto';
 import http from 'node:http';
-import net from 'node:net';
-import { spawn, spawnSync } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
-import { ConfigError, REQUIRED_ENV, loadConfig, publicWidgetConfig } from './config.mjs';
-import { signWidgetToken } from './jwt.mjs';
-import { TOKEN_LIMIT, TOKEN_WINDOW_MS, createServer } from './server.mjs';
-import './widget.test.mjs';
+import { once } from 'node:events';
+import { ConfigError, loadConfig } from './config.mjs';
+import { createServer, isAudioOnlyOffer } from './server.mjs';
 
 const ORIGIN = 'https://call-sea-hackathon.voidbox.io';
-const SCRIPT_URL = 'https://team-11-call.my.connect.aws/connectwidget/static/amazon-connect-chat-interface-client.js';
-const WIDGET_ID = '3f1c2a9e-8b7d-4c3a-9e21-5d6f7a8b9c0d';
-// Deliberately different from WIDGET_ID: the JWT subject must be the widget ID.
-const SNIPPET_ID = 'QVFJREFIZml4dHVyZS1zbmlwcGV0LWlkLW5vdC10aGUtd2lkZ2V0LWlk';
-// Fixture only. 44 characters used literally, like the key Connect issues (it is base64-looking
-// on purpose so that wrongly decoding it would produce a different signature).
-const SIGNING_KEY = 'Zml4dHVyZS1rZXktbm90LWEtcmVhbC1zZWNyZXQtb2s=';
 const DEMO_PASSWORD = 'fixture-demo-password-not-real';
-assert.equal(SIGNING_KEY.length, 44);
-
+const API_KEY = 'sk-fixture-not-a-real-openai-key-0000';
+const CALL_ID = 'rtc_fixture_call-01';
+const OFFER = ['v=0', 'o=- 1 2 IN IP4 127.0.0.1', 's=-', 't=0 0', 'm=audio 9 UDP/TLS/RTP/SAVPF 111', 'a=sendrecv', ''].join('\r\n');
+const ANSWER = 'v=0\r\ns=fixture-answer\r\nm=audio 9 UDP/TLS/RTP/SAVPF 111\r\n';
+// Shape of what Chrome sends for a Realtime call: one audio section plus the oai-events channel.
+const CHROME_OFFER = [
+  'v=0',
+  'o=- 4611731400430051336 2 IN IP4 127.0.0.1',
+  's=-',
+  't=0 0',
+  'a=group:BUNDLE 0 1',
+  'a=extmap-allow-mixed',
+  'a=msid-semantic: WMS',
+  'm=audio 9 UDP/TLS/RTP/SAVPF 111 63 9 0 8 13 110 126',
+  'c=IN IP4 0.0.0.0',
+  'a=rtcp:9 IN IP4 0.0.0.0',
+  'a=ice-ufrag:abcd',
+  'a=ice-pwd:fixturefixturefixturefixture',
+  'a=fingerprint:sha-256 00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF',
+  'a=setup:actpass',
+  'a=mid:0',
+  'a=sendrecv',
+  'a=rtcp-mux',
+  'a=rtpmap:111 opus/48000/2',
+  'a=fmtp:111 minptime=10;useinbandfec=1',
+  'm=application 9 UDP/DTLS/SCTP webrtc-datachannel',
+  'c=IN IP4 0.0.0.0',
+  'a=ice-ufrag:abcd',
+  'a=ice-pwd:fixturefixturefixturefixture',
+  'a=setup:actpass',
+  'a=mid:1',
+  'a=sctp-port:5000',
+  'a=max-message-size:262144',
+  '',
+].join('\r\n');
 const VALID_ENV = Object.freeze({
   PUBLIC_ORIGIN: ORIGIN,
-  WIDGET_SCRIPT_URL: SCRIPT_URL,
-  WIDGET_ID,
-  WIDGET_SNIPPET_ID: SNIPPET_ID,
-  WIDGET_SIGNING_KEY: SIGNING_KEY,
   DEMO_PASSWORD,
+  OPENAI_API_KEY: API_KEY,
+  VOICE_CUTOFF_AT: '2026-11-21T16:59:00Z',
 });
-
-// 2026-11-21T10:00:00Z. KNOWN_TOKEN was computed with an independent implementation (Python
-// hmac/hashlib/base64) over this widget ID, this clock and the literal SIGNING_KEY.
-const T0_MS = Date.UTC(2026, 10, 21, 10, 0, 0);
-const T0_SECONDS = 1795255200;
-const KNOWN_TOKEN =
-  'eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIzZjFjMmE5ZS04YjdkLTRjM2EtOWUyMS01ZDZmN2E4YjljMGQiLCJpYXQiOjE3OTUyNTUyMDAsImV4cCI6MTc5NTI1NTI2MH0.S5NhQeYj0mR_fNBFXpJHBptIf3q6wU7LuiU7LX6ZxH0';
-const SIGNATURE_IF_KEY_WERE_BASE64_DECODED = 'bwRx5_lfwkpMaxDLaCiXkDcDtq2nZeKChXiM8oFqwRM';
-
-const SERVER_PATH = fileURLToPath(new URL('./server.mjs', import.meta.url));
 
 const basic = (user, password) => `Basic ${Buffer.from(`${user}:${password}`).toString('base64')}`;
 const TEAM_AUTH = basic('team', DEMO_PASSWORD);
+const GOOD = Object.freeze({ authorization: TEAM_AUTH, origin: ORIGIN, 'content-type': 'application/sdp' });
 const clean = (headers) => Object.fromEntries(Object.entries(headers).filter(([, value]) => value !== undefined));
+
+function fakeProvider(overrides = {}) {
+  const calls = { start: [], hangup: [], shutdown: 0 };
+  return {
+    calls,
+    async start(sdp) {
+      calls.start.push(sdp);
+      return { id: CALL_ID, sdp: ANSWER };
+    },
+    async hangup(id) {
+      calls.hangup.push(id);
+    },
+    async shutdown() {
+      calls.shutdown += 1;
+      return { hungUp: true, uncertain: false };
+    },
+    ...overrides,
+  };
+}
+
+async function withServer(provider, fn, { logs = [] } = {}) {
+  const config = loadConfig({ ...VALID_ENV, HOST: '127.0.0.1' });
+  const server = createServer(config, { provider, log: (entry) => logs.push(entry) });
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  try {
+    await fn(server.address().port, server);
+  } finally {
+    server.closeAllConnections();
+    server.close();
+  }
+}
 
 function request(port, { method = 'GET', path = '/', headers = {}, body } = {}) {
   return new Promise((resolve, reject) => {
     const req = http.request({ host: '127.0.0.1', port, method, path, headers: clean(headers), agent: false }, (res) => {
       const chunks = [];
       res.on('data', (chunk) => chunks.push(chunk));
-      res.on('end', () => {
-        const text = Buffer.concat(chunks).toString('utf8');
-        resolve({ status: res.statusCode, headers: res.headers, text, json: () => JSON.parse(text) });
-      });
+      res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, text: Buffer.concat(chunks).toString('utf8') }));
     });
     req.on('error', reject);
-    if (body !== undefined) req.write(body);
-    req.end();
+    req.end(body);
   });
 }
 
-// Pass `auth: undefined` or `origin: undefined` to omit that header: a default parameter would
-// silently substitute the valid value and turn the negative cases into vacuous happy paths.
-const option = (options, key, fallback) => (Object.hasOwn(options, key) ? options[key] : fallback);
+const start = (port, extra = {}) => request(port, { method: 'POST', path: '/api/voice/calls', headers: { ...GOOD, ...extra.headers }, body: extra.body ?? OFFER });
+const hangup = (port, id = CALL_ID, headers = GOOD) =>
+  request(port, { method: 'POST', path: `/api/voice/calls/${id}/hangup`, headers });
 
-const post = (port, options = {}) =>
-  request(port, {
-    method: 'POST',
-    path: '/api/widget-token',
-    headers: {
-      authorization: option(options, 'auth', TEAM_AUTH),
-      origin: option(options, 'origin', ORIGIN),
-      ...(options.headers ?? {}),
-    },
-    body: options.body,
-  });
-
-const get = (port, path) => request(port, { path, headers: { authorization: TEAM_AUTH } });
-
-async function withServer(fn, { env = {} } = {}) {
-  const config = loadConfig({ ...VALID_ENV, ...env });
-  const clock = { ms: T0_MS };
-  const logs = [];
-  const server = createServer(config, { now: () => clock.ms, log: (entry) => logs.push(entry) });
-  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
-  try {
-    await fn({ port: server.address().port, clock, logs });
-  } finally {
-    await new Promise((resolve) => {
-      server.close(resolve);
-      server.closeAllConnections();
-    });
-  }
-}
-
-const decodePart = (part) => JSON.parse(Buffer.from(part, 'base64url').toString('utf8'));
-
-/** Independent verification: recompute HS256 over the signing input with the literal key. */
-function verifyToken(token) {
-  const parts = token.split('.');
-  assert.equal(parts.length, 3);
-  const expected = createHmac('sha256', SIGNING_KEY).update(`${parts[0]}.${parts[1]}`).digest('base64url');
-  assert.equal(parts[2], expected, 'signature must verify against the literal signing key');
-  return { header: decodePart(parts[0]), payload: decodePart(parts[1]) };
-}
-
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-
-async function waitFor(predicate, what, timeoutMs = 10_000) {
-  const deadline = Date.now() + timeoutMs;
-  while (!predicate()) {
-    if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}`);
-    await sleep(25);
-  }
-}
-
-function freePort() {
-  return new Promise((resolve, reject) => {
-    const probe = net.createServer();
-    probe.on('error', reject);
-    probe.listen(0, '127.0.0.1', () => {
-      const { port } = probe.address();
-      probe.close(() => resolve(port));
-    });
-  });
-}
-
-describe('configuration', () => {
-  test('accepts the documented environment and keeps secrets out of its JSON form', () => {
+describe('config', () => {
+  test('loads required values and defaults the state directory', () => {
     const config = loadConfig(VALID_ENV);
-    assert.equal(config.host, '0.0.0.0', 'containers bind every interface by default');
-    assert.equal(loadConfig({ ...VALID_ENV, HOST: '127.0.0.1' }).host, '127.0.0.1', 'local development binds loopback');
+    assert.equal(config.stateDir, '/var/lib/team-voice');
+    assert.equal(config.cutoffAt, Date.UTC(2026, 10, 21, 16, 59)); // epoch milliseconds
     assert.equal(config.publicOrigin, ORIGIN);
-    assert.equal(loadConfig({ ...VALID_ENV, PUBLIC_ORIGIN: 'http://localhost:8080' }).publicOrigin, 'http://localhost:8080');
-    const json = JSON.stringify(config);
-    assert.ok(!json.includes(SIGNING_KEY) && !json.includes(DEMO_PASSWORD));
-    assert.deepEqual(publicWidgetConfig(config), { scriptUrl: SCRIPT_URL, widgetId: WIDGET_ID, snippetId: SNIPPET_ID });
+    assert.equal(loadConfig({ ...VALID_ENV, VOICE_STATE_DIR: '/tmp/state' }).stateDir, '/tmp/state');
   });
 
-  for (const name of REQUIRED_ENV) {
-    test(`refuses to load without ${name}`, () => {
-      for (const missing of [undefined, '']) {
-        const env = { ...VALID_ENV, [name]: missing };
-        if (missing === undefined) delete env[name];
-        assert.throws(
-          () => loadConfig(env),
-          (error) => {
-            assert.ok(error instanceof ConfigError);
-            assert.deepEqual(error.problems.map((problem) => problem.name), [name]);
-            assert.ok(!error.message.includes(SIGNING_KEY) && !error.message.includes(DEMO_PASSWORD));
-            return true;
-          },
-        );
-      }
+  test('normalises offsets to UTC', () => {
+    assert.equal(loadConfig({ ...VALID_ENV, VOICE_CUTOFF_AT: '2026-11-21T23:59:00+07:00' }).cutoffAt, Date.UTC(2026, 10, 21, 16, 59));
+  });
+
+  for (const name of ['PUBLIC_ORIGIN', 'DEMO_PASSWORD', 'OPENAI_API_KEY', 'VOICE_CUTOFF_AT']) {
+    test(`missing ${name} names the variable and never a value`, () => {
+      const env = { ...VALID_ENV };
+      delete env[name];
+      assert.throws(() => loadConfig(env), (error) => {
+        assert.ok(error instanceof ConfigError);
+        assert.deepEqual(error.problems.map((p) => p.name), [name]);
+        assert.ok(!error.message.includes(API_KEY) && !error.message.includes(DEMO_PASSWORD));
+        return true;
+      });
     });
   }
 
-  // One representative per rule that guards the auth/JWT boundary.
-  const INVALID = {
-    'an http origin that is not localhost': ['PUBLIC_ORIGIN', 'http://call-sea-hackathon.voidbox.io'],
-    'an origin with a path': ['PUBLIC_ORIGIN', `${ORIGIN}/path`],
-    'a script URL outside my.connect.aws': ['WIDGET_SCRIPT_URL', 'https://attacker.example/connectwidget/static/amazon-connect-chat-interface-client.js'],
-    'a widget ID that is not a UUID': ['WIDGET_ID', SNIPPET_ID],
-    'a snippet ID equal to the widget ID': ['WIDGET_SNIPPET_ID', WIDGET_ID],
-    'a signing key of the wrong length': ['WIDGET_SIGNING_KEY', SIGNING_KEY.slice(0, 43)],
-    'a signing key with a trailing newline': ['WIDGET_SIGNING_KEY', `${SIGNING_KEY}\n`],
-    'a short demo password': ['DEMO_PASSWORD', 'too-short'],
-    'the signing key reused as the demo password': ['DEMO_PASSWORD', SIGNING_KEY],
-    'a HOST that is not an IP address': ['HOST', 'not-an-ip'],
-  };
-  for (const [description, [name, value]] of Object.entries(INVALID)) {
-    test(`rejects ${description}`, () => {
-      assert.throws(
-        () => loadConfig({ ...VALID_ENV, [name]: value }),
-        (error) => {
-          assert.ok(error instanceof ConfigError);
-          assert.ok(error.problems.some((problem) => problem.name === name), `expected a problem for ${name}`);
-          assert.ok(!error.message.includes(SIGNING_KEY) && !error.message.includes(DEMO_PASSWORD));
-          return true;
-        },
-      );
+  for (const bad of ['2026-11-21', '2026-11-21T16:59:00', 'tomorrow', '2026-13-45T00:00:00Z']) {
+    test(`rejects VOICE_CUTOFF_AT ${bad}`, () => {
+      assert.throws(() => loadConfig({ ...VALID_ENV, VOICE_CUTOFF_AT: bad }), ConfigError);
     });
   }
-});
 
-describe('widget JWT', () => {
-  test('matches an independently computed HS256 known answer', () => {
-    const token = signWidgetToken({ widgetId: WIDGET_ID, signingKey: SIGNING_KEY, nowSeconds: T0_SECONDS });
-    assert.equal(token, KNOWN_TOKEN);
-    const { header, payload } = verifyToken(token);
-    assert.deepEqual(header, { typ: 'JWT', alg: 'HS256' });
-    assert.deepEqual(payload, { sub: WIDGET_ID, iat: T0_SECONDS, exp: T0_SECONDS + 60 });
+  test('rejects bad origin, relative state dir, short password, reused key', () => {
+    assert.throws(() => loadConfig({ ...VALID_ENV, PUBLIC_ORIGIN: 'http://example.com' }), ConfigError);
+    assert.throws(() => loadConfig({ ...VALID_ENV, PUBLIC_ORIGIN: `${ORIGIN}/` }), ConfigError);
+    assert.throws(() => loadConfig({ ...VALID_ENV, VOICE_STATE_DIR: 'relative' }), ConfigError);
+    assert.throws(() => loadConfig({ ...VALID_ENV, DEMO_PASSWORD: 'short' }), ConfigError);
+    assert.throws(() => loadConfig({ ...VALID_ENV, DEMO_PASSWORD: API_KEY }), ConfigError);
   });
 
-  test('uses the key literally, not base64-decoded, and the widget ID, not the snippet ID', () => {
-    const [header, payload, signature] = KNOWN_TOKEN.split('.');
-    const decodedKeySignature = createHmac('sha256', Buffer.from(SIGNING_KEY, 'base64'))
-      .update(`${header}.${payload}`)
-      .digest('base64url');
-    assert.equal(decodedKeySignature, SIGNATURE_IF_KEY_WERE_BASE64_DECODED);
-    assert.notEqual(signature, SIGNATURE_IF_KEY_WERE_BASE64_DECODED);
-    assert.notEqual(decodePart(payload).sub, SNIPPET_ID);
-  });
-
-  test('refuses milliseconds where Unix seconds are required', () => {
-    assert.throws(
-      () => signWidgetToken({ widgetId: WIDGET_ID, signingKey: SIGNING_KEY, nowSeconds: T0_MS }),
-      TypeError,
-    );
+  test('serialising config leaks no secret', () => {
+    const text = JSON.stringify(loadConfig(VALID_ENV));
+    assert.ok(!text.includes(API_KEY) && !text.includes(DEMO_PASSWORD));
   });
 });
 
-describe('startup', () => {
-  test('refuses to start without configuration', () => {
-    const result = spawnSync(process.execPath, [SERVER_PATH], {
-      env: { PATH: process.env.PATH },
-      encoding: 'utf8',
-      timeout: 15_000,
-    });
-    assert.equal(result.status, 1);
-    for (const name of REQUIRED_ENV) assert.match(result.stderr, new RegExp(name));
-    assert.equal(result.stdout, '', 'it must not have started listening');
+describe('offer validation', () => {
+  test('accepts an audio-only offer, CRLF or LF', () => {
+    assert.ok(isAudioOnlyOffer(OFFER));
+    assert.ok(isAudioOnlyOffer(OFFER.replaceAll('\r\n', '\n')));
   });
-
-  test('refuses to start with one missing secret and never prints the others', () => {
-    const env = { PATH: process.env.PATH, ...VALID_ENV };
-    delete env.DEMO_PASSWORD;
-    const result = spawnSync(process.execPath, [SERVER_PATH], { env, encoding: 'utf8', timeout: 15_000 });
-    assert.equal(result.status, 1);
-    assert.match(result.stderr, /DEMO_PASSWORD/);
-    for (const output of [result.stdout, result.stderr]) {
-      assert.ok(!output.includes(SIGNING_KEY));
-      assert.ok(!output.includes(DEMO_PASSWORD));
-    }
-  });
-
-  test('starts from the environment, answers readiness, challenges anonymous users, and stops on SIGTERM', async () => {
-    const port = await freePort();
-    const child = spawn(process.execPath, [SERVER_PATH], {
-      env: { PATH: process.env.PATH, ...VALID_ENV, PORT: String(port), HOST: '127.0.0.1' },
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    let output = '';
-    child.stdout.on('data', (chunk) => { output += chunk; });
-    child.stderr.on('data', (chunk) => { output += chunk; });
-    // 'close' (not 'exit') fires only after stdout/stderr are fully drained.
-    const exited = new Promise((resolve) => child.on('close', (code, signal) => resolve({ code, signal })));
-    try {
-      await waitFor(() => output.includes('"listening"'), 'the server to report listening');
-      assert.deepEqual((await request(port, { path: '/healthz' })).json(), { status: 'ok' });
-      assert.equal((await request(port, { path: '/' })).status, 401);
-      child.kill('SIGTERM');
-      const outcome = await Promise.race([exited, sleep(10_000).then(() => 'timeout')]);
-      assert.deepEqual(outcome, { code: 0, signal: null });
-    } finally {
-      child.kill('SIGKILL');
-    }
-    assert.ok(!output.includes(SIGNING_KEY) && !output.includes(DEMO_PASSWORD));
+  for (const [name, sdp] of [
+    ['empty', ''],
+    ['not sdp', 'hello'],
+    ['video section', `${OFFER}m=video 9 UDP/TLS/RTP/SAVPF 96\r\n`],
+    ['chrome offer plus video', `${CHROME_OFFER}m=video 9 UDP/TLS/RTP/SAVPF 96\r\n`],
+    ['two audio sections', `${CHROME_OFFER}m=audio 9 UDP/TLS/RTP/SAVPF 111\r\n`],
+    ['two data channels', `${CHROME_OFFER}m=application 9 UDP/DTLS/SCTP webrtc-datachannel\r\n`],
+    ['application that is not SCTP data channel', `${OFFER}m=application 9 RTP/AVP 100\r\n`],
+    ['data channel without audio', 'v=0\r\nm=application 9 UDP/DTLS/SCTP webrtc-datachannel\r\n'],
+    ['no media', 'v=0\r\ns=-\r\n'],
+    ['video only', 'v=0\r\nm=video 9 RTP/AVP 96\r\n'],
+    ['stray line', `${OFFER}garbage\r\n`],
+    ['non-ascii', `${OFFER}a=x\u00e9\r\n`],
+    ['control byte', `${OFFER}a=x\u0000\r\n`],
+  ]) {
+    test(`rejects ${name}`, () => assert.equal(isAudioOnlyOffer(sdp), false));
+  }
+  test('accepts a realistic Chrome offer: audio plus the oai-events data channel', () => {
+    assert.ok(isAudioOnlyOffer(CHROME_OFFER));
+    assert.ok(isAudioOnlyOffer(CHROME_OFFER.replaceAll('\r\n', '\n')));
   });
 });
 
-describe('readiness', () => {
-  test('GET /healthz is public and reveals nothing but readiness', async () => {
-    await withServer(async ({ port }) => {
+describe('health and static files', () => {
+  test('healthz is open, tiny and uncached', async () => {
+    await withServer(fakeProvider(), async (port) => {
       const res = await request(port, { path: '/healthz' });
       assert.equal(res.status, 200);
-      assert.deepEqual(res.json(), { status: 'ok' });
-      for (const secret of [WIDGET_ID, SNIPPET_ID, SIGNING_KEY, DEMO_PASSWORD, SCRIPT_URL]) {
-        assert.ok(!res.text.includes(secret));
-      }
-    });
-  });
-});
-
-describe('team authentication', () => {
-  const BAD_AUTH = {
-    'no credentials': undefined,
-    'a wrong password': basic('team', `${DEMO_PASSWORD}x`),
-    'a wrong username': basic('admin', DEMO_PASSWORD),
-    'a non-Basic scheme': `Bearer ${DEMO_PASSWORD}`,
-    'a malformed Basic payload': 'Basic !!!!',
-  };
-  for (const [name, auth] of Object.entries(BAD_AUTH)) {
-    test(`token request with ${name} is 401 and carries no token`, async () => {
-      await withServer(async ({ port }) => {
-        const res = await post(port, { auth });
-        assert.equal(res.status, 401);
-        assert.match(res.headers['www-authenticate'], /^Basic realm=".+"/);
-        assert.equal(res.text, '{"error":"unauthorized"}');
-        assert.equal(res.headers['cache-control'], 'no-store');
-      });
-    });
-  }
-
-  test('a password containing colons is accepted (only the first colon splits)', async () => {
-    const password = 'fixture:demo:password:not-real';
-    await withServer(
-      async ({ port }) => {
-        assert.equal((await post(port, { auth: basic('team', password) })).status, 200);
-      },
-      { env: { DEMO_PASSWORD: password } },
-    );
-  });
-
-  test('every route except /healthz requires auth, before any method or origin check', async () => {
-    await withServer(async ({ port }) => {
-      for (const path of ['/', '/call.js', '/api/widget-config', '/api/widget-token', '/nope']) {
-        assert.equal((await request(port, { path })).status, 401, `GET ${path}`);
-      }
-      const wrongOriginNoAuth = await post(port, { auth: undefined, origin: 'https://evil.example' });
-      assert.equal(wrongOriginNoAuth.status, 401, 'anonymous callers learn nothing about the origin policy');
-    });
-  });
-
-  test('an unauthenticated browser navigation gets a readable page with the challenge', async () => {
-    await withServer(async ({ port }) => {
-      const res = await request(port, { path: '/', headers: { accept: 'text/html,application/xhtml+xml' } });
-      assert.equal(res.status, 401);
-      assert.match(res.headers['content-type'], /^text\/html/);
-      assert.match(res.headers['www-authenticate'], /^Basic /);
-    });
-  });
-});
-
-describe('POST /api/widget-token', () => {
-  test('issues a verifiable HS256 token for the widget ID with exp = iat + 60', async () => {
-    await withServer(async ({ port }) => {
-      const res = await post(port, { headers: { 'sec-fetch-site': 'same-origin' } });
-      assert.equal(res.status, 200);
-      assert.deepEqual(Object.keys(res.json()), ['data']);
+      assert.deepEqual(JSON.parse(res.text), { status: 'ok' });
       assert.equal(res.headers['cache-control'], 'no-store');
-      assert.match(res.headers['content-type'], /^application\/json/);
-      assert.equal(res.headers['access-control-allow-origin'], undefined);
-      assert.equal(res.headers.location, undefined);
-
-      const token = res.json().data;
-      assert.equal(token, KNOWN_TOKEN);
-      const { header, payload } = verifyToken(token);
-      assert.deepEqual(header, { typ: 'JWT', alg: 'HS256' });
-      assert.deepEqual(payload, { sub: WIDGET_ID, iat: T0_SECONDS, exp: T0_SECONDS + 60 });
-      assert.notEqual(payload.sub, SNIPPET_ID, 'the subject is the widget ID, never the snippet ID');
+      assert.equal((await request(port, { method: 'POST', path: '/healthz' })).status, 405);
     });
   });
 
-  const BAD_ORIGINS = {
-    'a missing Origin': undefined,
-    'another site': 'https://evil.example',
-    'a look-alike suffix': `${ORIGIN}.evil.example`,
-    'another scheme': 'http://call-sea-hackathon.voidbox.io',
-  };
-  for (const [name, origin] of Object.entries(BAD_ORIGINS)) {
-    test(`403 for ${name}, with no token`, async () => {
-      await withServer(async ({ port }) => {
-        const res = await post(port, { origin });
-        assert.equal(res.status, 403);
-        assert.equal(res.text, '{"error":"origin_not_allowed"}');
+  test('the three assets need auth and are served no-store', async () => {
+    await withServer(fakeProvider(), async (port) => {
+      for (const [path, type] of [['/', 'text/html'], ['/index.html', 'text/html'], ['/styles.css', 'text/css'], ['/call.js', 'text/javascript']]) {
+        assert.equal((await request(port, { path })).status, 401, path);
+        const res = await request(port, { path, headers: { authorization: TEAM_AUTH } });
+        assert.equal(res.status, 200, path);
+        assert.ok(res.headers['content-type'].startsWith(type));
+        assert.equal(res.headers['cache-control'], 'no-store');
         assert.equal(res.headers['access-control-allow-origin'], undefined);
-      });
-    });
-  }
-
-  test('403 when the browser reports a cross-site request, even with the right Origin', async () => {
-    await withServer(async ({ port }) => {
-      const res = await post(port, { headers: { 'sec-fetch-site': 'cross-site' } });
-      assert.equal(res.status, 403);
-      assert.doesNotMatch(res.text, /"data"/);
+      }
     });
   });
 
-  for (const method of ['GET', 'OPTIONS']) {
-    test(`${method} is 405 and advertises POST only`, async () => {
-      await withServer(async ({ port }) => {
-        const res = await request(port, {
-          method,
-          path: '/api/widget-token',
-          headers: { authorization: TEAM_AUTH, origin: ORIGIN },
-        });
-        assert.equal(res.status, 405);
+  test('401 carries a Basic challenge for the team realm', async () => {
+    await withServer(fakeProvider(), async (port) => {
+      const res = await request(port, { path: '/' });
+      assert.match(res.headers['www-authenticate'], /^Basic realm="Team 11 Connect call"/);
+    });
+  });
+
+  test('only fixed routes exist: no widget, config, traversal, recording or redirects', async () => {
+    await withServer(fakeProvider(), async (port) => {
+      const headers = { authorization: TEAM_AUTH };
+      for (const path of ['/widget.mjs', '/api/widget-config', '/api/widget-token', '/api/voice/recordings', '/../server.mjs', '/%2e%2e/server.mjs', '/call.js/', '/api/voice/calls/x/summary']) {
+        const res = await request(port, { path, headers });
+        assert.equal(res.status, 404, path);
+        assert.equal(res.headers.location, undefined);
+      }
+      assert.equal((await request(port, { path: '//evil.example/', headers })).status, 400);
+      assert.equal((await request(port, { method: 'POST', path: '/call.js', headers })).status, 405);
+    });
+  });
+});
+
+describe('POST /api/voice/calls', () => {
+  test('happy path: 201, SDP answer, call id header, offer forwarded verbatim', async () => {
+    const provider = fakeProvider();
+    await withServer(provider, async (port) => {
+      const res = await start(port);
+      assert.equal(res.status, 201);
+      assert.equal(res.headers['content-type'], 'application/sdp');
+      assert.equal(res.headers['x-voice-call-id'], CALL_ID);
+      assert.equal(res.headers['cache-control'], 'no-store');
+      assert.equal(res.text, ANSWER);
+      assert.deepEqual(provider.calls.start, [OFFER]);
+      assert.deepEqual(provider.calls.hangup, []);
+    });
+  });
+
+  test('wrong or missing auth never reaches the provider', async () => {
+    const provider = fakeProvider();
+    await withServer(provider, async (port) => {
+      for (const authorization of [undefined, basic('team', 'wrong-password-wrong-pw'), basic('other', DEMO_PASSWORD), 'Bearer x', 'Basic !!!']) {
+        const res = await start(port, { headers: { authorization } });
+        assert.equal(res.status, 401);
+      }
+      assert.equal(provider.calls.start.length, 0);
+    });
+  });
+
+  test('origin must match exactly, Sec-Fetch-Site must be same-origin', async () => {
+    const provider = fakeProvider();
+    await withServer(provider, async (port) => {
+      for (const origin of [undefined, 'null', 'http://call-sea-hackathon.voidbox.io', `${ORIGIN}.evil.example`, `${ORIGIN}/`, 'https://evil.example']) {
+        assert.equal((await start(port, { headers: { origin } })).status, 403, String(origin));
+      }
+      assert.equal((await start(port, { headers: { 'sec-fetch-site': 'cross-site' } })).status, 403);
+      assert.equal((await start(port, { headers: { 'sec-fetch-site': 'same-site' } })).status, 403);
+      assert.equal(provider.calls.start.length, 0);
+      assert.equal((await start(port, { headers: { 'sec-fetch-site': 'same-origin' } })).status, 201);
+    });
+  });
+
+  test('method and media type are strict', async () => {
+    const provider = fakeProvider();
+    await withServer(provider, async (port) => {
+      for (const method of ['GET', 'PUT', 'DELETE']) {
+        const res = await request(port, { method, path: '/api/voice/calls', headers: GOOD });
+        assert.equal(res.status, 405, method);
         assert.equal(res.headers.allow, 'POST');
-        assert.equal(res.headers['access-control-allow-origin'], undefined);
-        assert.doesNotMatch(res.text, /"data"/);
-      });
-    });
-  }
-
-  test('a CORS preflight from another origin gets no permission headers', async () => {
-    await withServer(async ({ port }) => {
-      const res = await request(port, {
-        method: 'OPTIONS',
-        path: '/api/widget-token',
-        headers: { origin: 'https://evil.example', 'access-control-request-method': 'POST' },
-      });
-      assert.equal(res.status, 401);
-      assert.equal(res.headers['access-control-allow-origin'], undefined);
-    });
-  });
-
-  test('a request body is refused and consumes no token', async () => {
-    await withServer(async ({ port }) => {
-      const res = await post(port, { body: 'x', headers: { 'content-length': '1' } });
-      assert.equal(res.status, 413);
-      assert.doesNotMatch(res.text, /"data"/);
-      for (let i = 0; i < TOKEN_LIMIT; i += 1) assert.equal((await post(port)).status, 200);
-    });
-  });
-});
-
-describe('rate limit', () => {
-  test('six tokens per minute across the whole process, then 429 until the window passes', async () => {
-    await withServer(async ({ port, clock }) => {
-      assert.equal(TOKEN_LIMIT, 6);
-      assert.equal(TOKEN_WINDOW_MS, 60_000);
-      for (let i = 0; i < 6; i += 1) assert.equal((await post(port)).status, 200, `token ${i + 1}`);
-
-      clock.ms = T0_MS + 10_000;
-      const limited = await post(port);
-      assert.equal(limited.status, 429);
-      assert.equal(limited.headers['retry-after'], '50');
-      assert.equal(limited.text, '{"error":"rate_limited"}');
-
-      clock.ms = T0_MS + TOKEN_WINDOW_MS;
-      assert.equal((await post(port)).status, 200, 'the window has passed');
-    });
-  });
-
-  test('only requests that would receive a token count against the limit', async () => {
-    await withServer(async ({ port }) => {
-      for (let i = 0; i < 10; i += 1) {
-        assert.equal((await post(port, { auth: basic('team', 'wrong-password-fixture') })).status, 401);
-        assert.equal((await post(port, { origin: 'https://evil.example' })).status, 403);
-        assert.equal((await request(port, { path: '/api/widget-token', headers: { authorization: TEAM_AUTH } })).status, 405);
       }
-      for (let i = 0; i < 6; i += 1) assert.equal((await post(port)).status, 200, `token ${i + 1} still available`);
-      assert.equal((await post(port)).status, 429);
-    });
-  });
-});
-
-describe('no redirects', () => {
-  test('no response is ever a redirect or carries a Location header', async () => {
-    await withServer(async ({ port }) => {
-      const paths = ['/', '//evil.example', '/api/widget-token/', '/call.js?next=https://evil.example'];
-      for (const method of ['GET', 'POST']) {
-        for (const auth of [TEAM_AUTH, undefined]) {
-          for (const path of paths) {
-            const res = await request(port, { method, path, headers: { authorization: auth, origin: ORIGIN } });
-            assert.ok(res.status < 300 || res.status >= 400, `${method} ${path} -> ${res.status}`);
-            assert.equal(res.headers.location, undefined, `${method} ${path} must not redirect`);
-          }
-        }
+      for (const type of [undefined, 'application/json', 'text/plain', 'multipart/form-data; boundary=x']) {
+        assert.equal((await start(port, { headers: { 'content-type': type } })).status, 415, String(type));
       }
+      assert.equal(provider.calls.start.length, 0);
     });
   });
 
-  test('an absolute-form request target is a 400 and never reaches routing', async () => {
-    await withServer(async ({ port }) => {
+  test('body over 32 KiB is refused before the provider; offers that are not audio-only get 400', async () => {
+    const provider = fakeProvider();
+    await withServer(provider, async (port) => {
+      assert.equal((await start(port, { body: `${OFFER}a=${'x'.repeat(33 * 1024)}\r\n` })).status, 413);
+      assert.equal((await start(port, { body: 'not sdp' })).status, 400);
+      assert.equal((await start(port, { body: `${OFFER}m=video 9 RTP/AVP 96\r\n` })).status, 400);
+      assert.equal((await start(port, { body: '' })).status, 400);
+      assert.equal(provider.calls.start.length, 0);
+    });
+  });
+
+  test('session settings from the browser are not a thing: query string is ignored, only the SDP is forwarded', async () => {
+    const provider = fakeProvider();
+    await withServer(provider, async (port) => {
       const res = await request(port, {
         method: 'POST',
-        path: 'http://evil.example/api/widget-token',
-        headers: { authorization: TEAM_AUTH, origin: ORIGIN },
+        path: '/api/voice/calls?model=gpt-x&instructions=evil',
+        headers: { ...GOOD, 'x-session': '{"voice":"x"}' },
+        body: OFFER,
       });
-      assert.equal(res.status, 400);
-      assert.doesNotMatch(res.text, /"data"/);
+      assert.equal(res.status, 201);
+      assert.deepEqual(provider.calls.start, [OFFER]);
+    });
+  });
+
+  test('provider failures map to safe statuses without leaking provider text', async () => {
+    const cases = [
+      [403, 'voice_closed', 403, 'voice_closed'],
+      [404, 'unknown_call', 404, 'unknown_call'],
+      [429, 'busy', 429, 'busy'],
+      [429, 'quota_exhausted', 429, 'quota_exhausted'],
+      [503, 'shutting_down', 503, 'shutting_down'],
+      [400, 'invalid_offer', 400, 'invalid_offer'],
+      [502, 'upstream_rejected', 502, 'upstream_rejected'],
+      [500, 'weird_new_code', 502, 'upstream_error'], // unknown code and status are collapsed
+      [401, undefined, 502, 'upstream_error'],
+      [undefined, undefined, 502, 'upstream_error'],
+    ];
+    for (const [status, code, expected, expectedCode] of cases) {
+      const provider = fakeProvider({
+        async start() {
+          throw Object.assign(new Error(`upstream secret ${API_KEY} body`), { status, code });
+        },
+      });
+      const logs = [];
+      await withServer(provider, async (port) => {
+        const res = await start(port);
+        assert.equal(res.status, expected);
+        assert.deepEqual(JSON.parse(res.text), { error: expectedCode });
+        assert.ok(!res.text.includes(API_KEY) && !res.text.includes('upstream secret'));
+      }, { logs });
+      assert.ok(!JSON.stringify(logs).includes(API_KEY));
+    }
+  });
+
+  test('an unusable provider answer is a 502 and an otherwise valid call is hung up', async () => {
+    const provider = fakeProvider({
+      async start() {
+        return { id: CALL_ID, sdp: '' };
+      },
+    });
+    await withServer(provider, async (port) => {
+      assert.equal((await start(port)).status, 502);
+      assert.deepEqual(provider.calls.hangup, [CALL_ID]);
+    });
+    const badId = fakeProvider({
+      async start() {
+        return { id: '../../x', sdp: ANSWER };
+      },
+    });
+    await withServer(badId, async (port) => {
+      assert.equal((await start(port)).status, 502);
+      assert.deepEqual(badId.calls.hangup, []);
+    });
+  });
+
+  test('browser leaving during creation hangs the new call up', async () => {
+    let release;
+    const gate = new Promise((resolve) => {
+      release = resolve;
+    });
+    let entered;
+    const started = new Promise((resolve) => {
+      entered = resolve;
+    });
+    const provider = fakeProvider({
+      async start(sdp) {
+        provider.calls.start.push(sdp);
+        entered();
+        await gate;
+        return { id: CALL_ID, sdp: ANSWER };
+      },
+    });
+    await withServer(provider, async (port) => {
+      const req = http.request({ host: '127.0.0.1', port, method: 'POST', path: '/api/voice/calls', headers: { ...GOOD, 'content-length': Buffer.byteLength(OFFER) }, agent: false });
+      req.on('error', () => {});
+      req.end(OFFER);
+      await started;
+      req.destroy();
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      release();
+      for (let i = 0; i < 50 && provider.calls.hangup.length === 0; i += 1) await new Promise((resolve) => setTimeout(resolve, 20));
+      assert.deepEqual(provider.calls.hangup, [CALL_ID]);
+    });
+  });
+
+  test('logs contain neither SDP nor credentials', async () => {
+    const logs = [];
+    await withServer(fakeProvider(), async (port) => {
+      await start(port);
+      await start(port, { headers: { authorization: basic('team', 'nope-nope-nope-nope') } });
+    }, { logs });
+    const text = JSON.stringify(logs);
+    for (const secret of [API_KEY, DEMO_PASSWORD, 'IN IP4', ANSWER.slice(0, 12), Buffer.from(`team:${DEMO_PASSWORD}`).toString('base64')]) {
+      assert.ok(!text.includes(secret), secret);
+    }
+  });
+});
+
+describe('POST /api/voice/calls/{id}/hangup', () => {
+  test('204 with no body, and repeating it is fine', async () => {
+    const provider = fakeProvider();
+    await withServer(provider, async (port) => {
+      for (let i = 0; i < 2; i += 1) {
+        const res = await hangup(port, CALL_ID, { authorization: TEAM_AUTH, origin: ORIGIN });
+        assert.equal(res.status, 204);
+        assert.equal(res.text, '');
+      }
+      assert.deepEqual(provider.calls.hangup, [CALL_ID, CALL_ID]);
+    });
+  });
+
+  test('auth, origin, method, body and id are enforced before the provider', async () => {
+    const provider = fakeProvider();
+    await withServer(provider, async (port) => {
+      assert.equal((await hangup(port, CALL_ID, { origin: ORIGIN })).status, 401);
+      assert.equal((await hangup(port, CALL_ID, { authorization: TEAM_AUTH })).status, 403);
+      assert.equal((await hangup(port, CALL_ID, { authorization: TEAM_AUTH, origin: 'https://evil.example' })).status, 403);
+      assert.equal((await hangup(port, CALL_ID, { ...GOOD, 'sec-fetch-site': 'cross-site' })).status, 403);
+      const get = await request(port, { path: `/api/voice/calls/${CALL_ID}/hangup`, headers: GOOD });
+      assert.equal(get.status, 405);
+      const withBody = await request(port, { method: 'POST', path: `/api/voice/calls/${CALL_ID}/hangup`, headers: GOOD, body: 'x' });
+      assert.equal(withBody.status, 413);
+      for (const id of ['abc', 'rtc_', 'rtc_a%2Fb', 'rtc_a.b', 'x_abcdef', `rtc_${'a'.repeat(140)}`]) {
+        assert.equal((await hangup(port, id, { authorization: TEAM_AUTH, origin: ORIGIN })).status, 400, id);
+      }
+      assert.deepEqual(provider.calls.hangup, []);
+    });
+  });
+
+  test('provider failure is a safe 502', async () => {
+    const provider = fakeProvider({
+      async hangup() {
+        throw Object.assign(new Error(`body with ${API_KEY}`), { status: 500 });
+      },
+    });
+    await withServer(provider, async (port) => {
+      const res = await hangup(port, CALL_ID, { authorization: TEAM_AUTH, origin: ORIGIN });
+      assert.equal(res.status, 502);
+      assert.ok(!res.text.includes(API_KEY));
     });
   });
 });
 
-describe('static page and configuration endpoint', () => {
-  test('serves the page and its scripts to the team', async () => {
-    await withServer(async ({ port }) => {
-      const page = await get(port, '/');
-      assert.equal(page.status, 200);
-      assert.match(page.headers['content-type'], /^text\/html/);
-      assert.match(page.text, /Team Eleven\. Your browser is connected to Amazon Connect\./);
-      for (const [path, type] of [['/call.js', /^text\/javascript/], ['/widget.mjs', /^text\/javascript/], ['/styles.css', /^text\/css/]]) {
-        const res = await get(port, path);
-        assert.equal(res.status, 200, path);
-        assert.match(res.headers['content-type'], type, path);
-      }
+describe('shutdown', () => {
+  test('drain waits for a call being created, then shuts the provider down; new calls get 503', async () => {
+    let release;
+    const gate = new Promise((resolve) => {
+      release = resolve;
     });
-  });
-
-  test('serves nothing outside the frontend allow-list', async () => {
-    await withServer(async ({ port }) => {
-      for (const path of ['/backend/server.mjs', '/.env', '/server.test.mjs', '/../backend/config.mjs', '/%2e%2e/backend/server.mjs']) {
-        const res = await get(port, path);
-        assert.equal(res.status, 404, path);
-        assert.equal(res.text, '{"error":"not_found"}');
-      }
+    let entered;
+    const started = new Promise((resolve) => {
+      entered = resolve;
     });
-  });
-
-  test('GET /api/widget-config exposes public widget fields only', async () => {
-    await withServer(async ({ port }) => {
-      const res = await get(port, '/api/widget-config');
-      assert.equal(res.status, 200);
-      assert.deepEqual(res.json(), { scriptUrl: SCRIPT_URL, widgetId: WIDGET_ID, snippetId: SNIPPET_ID });
-      for (const secret of [SIGNING_KEY, DEMO_PASSWORD]) assert.ok(!res.text.includes(secret));
+    const provider = fakeProvider({
+      async start(sdp) {
+        provider.calls.start.push(sdp);
+        entered();
+        await gate;
+        return { id: CALL_ID, sdp: ANSWER };
+      },
     });
-  });
-
-  test('responses are uncacheable, unframeable, and keep an origin-only referrer for the widget', async () => {
-    await withServer(async ({ port }) => {
-      const responses = [await request(port, { path: '/' }), await get(port, '/'), await get(port, '/api/widget-config'), await post(port)];
-      for (const res of responses) {
-        assert.equal(res.headers['cache-control'], 'no-store');
-        assert.match(res.headers['content-security-policy'], /frame-ancestors 'none'/);
-        // Origin-only referrer: the AWS widget still needs to see which site embeds it.
-        assert.equal(res.headers['referrer-policy'], 'strict-origin-when-cross-origin');
-      }
+    await withServer(provider, async (port, server) => {
+      const pending = start(port);
+      await started;
+      let drained = false;
+      const drain = server.drain().then(() => {
+        drained = true;
+      });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      assert.equal(drained, false);
+      assert.equal(provider.calls.shutdown, 0);
+      assert.equal((await start(port)).status, 503);
+      release();
+      assert.equal((await pending).status, 503, 'do not hand a browser the SDP of a call being hung up');
+      await drain;
+      assert.equal(provider.calls.shutdown, 1);
     });
   });
 });
 
-describe('logging', () => {
-  test('log lines never contain credentials, tokens, or header values', async () => {
-    await withServer(async ({ port, logs }) => {
-      const wrongPassword = 'wrong-password-marker-12345';
-      const wrongAuth = basic('team', wrongPassword);
-      const issued = await post(port);
-      assert.equal(issued.status, 200);
-      await post(port, { auth: wrongAuth });
-      await post(port, { origin: 'https://evil.example' });
-      await get(port, '/secret-looking-path?token=abc');
-      for (let i = 0; i < TOKEN_LIMIT; i += 1) await post(port);
-      await sleep(50); // access-log lines are written when each response finishes
-
-      assert.ok(logs.length >= 6, 'the log must not be empty, or this test proves nothing');
-      assert.ok(logs.some((entry) => entry.msg === 'widget token issued'));
-      assert.ok(logs.some((entry) => entry.msg === 'request' && entry.route === 'token' && entry.status === 429));
-      const text = JSON.stringify(logs);
-      for (const secret of [
-        DEMO_PASSWORD,
-        SIGNING_KEY,
-        issued.json().data,
-        TEAM_AUTH,
-        TEAM_AUTH.slice('Basic '.length),
-        wrongPassword,
-        wrongAuth,
-        wrongAuth.slice('Basic '.length),
-        'secret-looking-path',
-        'token=abc',
-      ]) {
-        assert.ok(!text.includes(secret), 'a secret or request detail reached the log');
-      }
+describe('shutdown outcome', () => {
+  for (const [name, outcome, clean] of [
+    ['all hung up', { hungUp: true, uncertain: false }, true],
+    ['unconfirmed known call', { hungUp: false, uncertain: false }, false],
+    ['id-less reservation', { hungUp: true, uncertain: true }, false],
+    ['no answer at all', undefined, false],
+  ]) {
+    test(`${name}: clean=${clean}`, async () => {
+      const provider = fakeProvider({ async shutdown() { return outcome; } });
+      await withServer(provider, async (_port, server) => {
+        assert.equal((await server.drain()).clean, clean);
+      });
     });
-  });
+  }
 });
