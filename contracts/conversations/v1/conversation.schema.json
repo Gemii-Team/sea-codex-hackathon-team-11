@@ -1,0 +1,101 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Thai web call conversation",
+  "description": "A processed conversation from a Connect web call or a synthetic fixture for the UI.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "contactId",
+    "source",
+    "channel",
+    "locale",
+    "startedAt",
+    "transcriptStatus",
+    "turns",
+    "summaryStatus",
+    "summary"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "contactId": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*$",
+      "description": "The Connect contact ID or synthetic fixture ID. Also used as the object filename without the extension."
+    },
+    "source": {
+      "enum": ["connect", "fixture"],
+      "description": "Use fixture for handcrafted demo data and connect for captured web calls."
+    },
+    "channel": { "const": "web_call" },
+    "locale": { "const": "th-TH" },
+    "startedAt": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Call start time as an RFC 3339 timestamp."
+    },
+    "transcriptStatus": {
+      "enum": ["complete", "partial", "unavailable"],
+      "description": "Whether the transcript covers the entire call, covers part of it, or has no usable turns."
+    },
+    "turns": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/turn" },
+      "description": "Transcript turns in display order, with sensitive values removed. Turn IDs must be unique within the conversation."
+    },
+    "summaryStatus": {
+      "enum": ["ready", "failed", "unavailable"],
+      "description": "Whether a summary is present, generation failed, or a summary was unavailable without a generation failure."
+    },
+    "summary": {
+      "anyOf": [{ "$ref": "#/$defs/summary" }, { "type": "null" }],
+      "description": "A summary based on the available turns, or null when no summary is available."
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "transcriptStatus": { "const": "unavailable" } } },
+      "then": {
+        "properties": {
+          "turns": { "type": "array", "maxItems": 0 },
+          "summaryStatus": { "const": "unavailable" }
+        }
+      },
+      "else": { "properties": { "turns": { "type": "array", "minItems": 1 } } }
+    },
+    {
+      "if": { "properties": { "summaryStatus": { "const": "ready" } } },
+      "then": { "properties": { "summary": { "type": "object" } } },
+      "else": { "properties": { "summary": { "type": "null" } } }
+    }
+  ],
+  "$defs": {
+    "nonBlankString": { "type": "string", "pattern": "\\S" },
+    "turn": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "speaker", "text"],
+      "properties": {
+        "id": { "$ref": "#/$defs/nonBlankString" },
+        "speaker": { "enum": ["caller", "bot"] },
+        "text": { "$ref": "#/$defs/nonBlankString" }
+      }
+    },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["title", "text", "evidenceTurnIds"],
+      "properties": {
+        "title": { "$ref": "#/$defs/nonBlankString" },
+        "text": { "$ref": "#/$defs/nonBlankString" },
+        "evidenceTurnIds": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/nonBlankString" },
+          "minItems": 1,
+          "uniqueItems": true,
+          "description": "IDs of turns in this conversation that support the summary. The producer verifies that these IDs exist."
+        }
+      }
+    }
+  }
+}
