@@ -23,7 +23,7 @@ import (
 )
 
 const callDuration = 3 * time.Minute
-const demoCallLimit = 25
+const demoSeconds = 75 * 60
 
 var errVoiceLimit = errors.New("demo call limit reached")
 
@@ -59,13 +59,13 @@ func registerVoice(routes *http.ServeMux) {
 		w.Header().Set("Cache-Control", "no-store")
 		lock.Lock()
 		defer lock.Unlock()
-		count, err := voiceCallCount()
+		used, err := voiceSecondsUsed()
 		if err != nil || key == "" || code == "" || phoneURL == "" {
 			http.Error(w, "Voice demo unavailable", http.StatusServiceUnavailable)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{"busy": active != nil, "remaining": max(0, demoCallLimit-count)})
+		json.NewEncoder(w).Encode(map[string]any{"busy": active != nil, "secondsRemaining": max(0, demoSeconds-used)})
 	})
 	routes.HandleFunc("POST /api/v1/voice/calls/{id}/hangup", func(w http.ResponseWriter, r *http.Request) {
 		id := r.PathValue("id")
@@ -134,12 +134,15 @@ func registerVoice(routes *http.ServeMux) {
 			return
 		}
 		reservation := &voiceReservation{until: time.Now().Add(callDuration)}
-		count, err := voiceCallCount()
+		used, err := voiceSecondsUsed()
+		reserved := min(int(callDuration.Seconds()), max(0, demoSeconds-used))
+		duration := time.Duration(reserved) * time.Second
+		reservation.until = time.Now().Add(duration)
 		if err == nil {
-			if count >= demoCallLimit {
+			if used >= demoSeconds {
 				err = errVoiceLimit
 			} else {
-				err = writeVoiceCallCount(count + 1)
+				err = writeVoiceSeconds(used + reserved)
 			}
 		}
 		if err == nil {
@@ -166,7 +169,7 @@ func registerVoice(routes *http.ServeMux) {
 		// so the server can still schedule closure for the created call.
 		response, err := offerClient.Do(req)
 		if err != nil {
-			time.AfterFunc(callDuration, release)
+			time.AfterFunc(duration, release)
 			http.Error(w, "OpenAI call request failed", http.StatusBadGateway)
 			return
 		}
@@ -174,12 +177,12 @@ func registerVoice(routes *http.ServeMux) {
 		if response.StatusCode < 200 || response.StatusCode >= 300 {
 			if response.StatusCode != http.StatusUnprocessableEntity {
 				// The upstream call may exist even if the internal service lost its response.
-				time.AfterFunc(callDuration, release)
+				time.AfterFunc(duration, release)
 				http.Error(w, "Phone service unavailable", http.StatusBadGateway)
 				return
 			}
 			lock.Lock()
-			if err := writeVoiceCallCount(count); err != nil {
+			if err := writeVoiceSeconds(used); err != nil {
 				log.Print("Could not restore quota after rejected call")
 			}
 			active = nil
@@ -190,10 +193,11 @@ func registerVoice(routes *http.ServeMux) {
 		}
 		id := path.Base(response.Header.Get("Location"))
 		if !validVoiceCallID(id) {
-			time.AfterFunc(callDuration, release)
+			time.AfterFunc(duration, release)
 			http.Error(w, "OpenAI call ID missing", http.StatusBadGateway)
 			return
 		}
+		started := time.Now()
 		var ending sync.Mutex
 		ended := false
 		end := func() bool {
@@ -214,13 +218,21 @@ func registerVoice(routes *http.ServeMux) {
 				return false
 			}
 			ended = true
-			release()
+			lock.Lock()
+			if active == reservation {
+				elapsed := min(reserved, int(time.Since(started)/time.Second)+1)
+				if err := writeVoiceSeconds(used + elapsed); err != nil {
+					log.Print("Could not settle voice time")
+				}
+				active = nil
+			}
+			lock.Unlock()
 			return true
 		}
 		lock.Lock()
-		reservation.id, reservation.end, reservation.until = id, end, time.Now().Add(callDuration)
+		reservation.id, reservation.end, reservation.until = id, end, time.Now().Add(duration)
 		lock.Unlock()
-		time.AfterFunc(callDuration, func() {
+		time.AfterFunc(duration, func() {
 			for attempt := 0; attempt < 3; attempt++ {
 				if end() {
 					return
@@ -232,6 +244,7 @@ func registerVoice(routes *http.ServeMux) {
 		})
 		w.Header().Set("Content-Type", "application/sdp")
 		w.Header().Set("X-Phone-History", strconv.FormatBool(attachPhoneHistory(id)))
+		w.Header().Set("X-Voice-Max-Seconds", strconv.Itoa(reserved))
 		w.Header().Set("X-Voice-Call-ID", id)
 		w.Header().Set("X-Voice-Recording-Token", recordingToken(id))
 		_, _ = io.Copy(w, io.LimitReader(response.Body, 32<<10))
@@ -239,27 +252,38 @@ func registerVoice(routes *http.ServeMux) {
 }
 
 // This stack runs one API replica. Persist reservations on its durable volume.
-const voiceCountFile = "/var/lib/wirachit/voice-call-count"
+const voiceSecondsFile = "/var/lib/wirachit/voice-seconds-used"
 
-func voiceCallCount() (int, error) {
-	value, err := os.ReadFile(voiceCountFile)
-	count := 0
-	if err == nil {
-		count, err = strconv.Atoi(string(value))
-		if err != nil || count < 0 {
-			return 0, fmt.Errorf("invalid voice call count")
-		}
-	} else if !os.IsNotExist(err) {
-		return 0, err
-	}
-	return count, nil
+func voiceSecondsUsed() (int, error) {
+	return readVoiceSeconds(filepath.Dir(voiceSecondsFile))
 }
 
-func writeVoiceCallCount(count int) error {
-	if err := os.WriteFile(voiceCountFile+".next", []byte(strconv.Itoa(count)), 0600); err != nil {
+func readVoiceSeconds(dir string) (int, error) {
+	value, err := os.ReadFile(filepath.Join(dir, "voice-seconds-used"))
+	scale := 1
+	if os.IsNotExist(err) {
+		// Older versions reserved up to three minutes for each call.
+		value, err = os.ReadFile(filepath.Join(dir, "voice-call-count"))
+		scale = int(callDuration.Seconds())
+	}
+	if os.IsNotExist(err) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	amount, err := strconv.Atoi(strings.TrimSpace(string(value)))
+	if err != nil || amount < 0 {
+		return 0, fmt.Errorf("invalid voice usage")
+	}
+	return min(demoSeconds/scale, amount) * scale, nil
+}
+
+func writeVoiceSeconds(seconds int) error {
+	if err := os.WriteFile(voiceSecondsFile+".next", []byte(strconv.Itoa(seconds)), 0600); err != nil {
 		return err
 	}
-	return os.Rename(voiceCountFile+".next", voiceCountFile)
+	return os.Rename(voiceSecondsFile+".next", voiceSecondsFile)
 }
 
 func validVoiceCallID(id string) bool {
