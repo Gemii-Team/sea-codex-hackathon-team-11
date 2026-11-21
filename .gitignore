@@ -1,10 +1,18 @@
+# Secrets: credentials live in .env at the repo root; never commit it.
+.env
+.env.*
+*.csv
 .DS_Store
-node_modules/
-dist/
+
+# OpenTofu
 .terraform/
-*.tfstate*
+*.tfstate
+*.tfstate.*
 *.tfplan
 *.tfvars
 *.tfvars.json
 crash.log
-.env
+
+# Frontend build artifacts
+node_modules/
+dist/

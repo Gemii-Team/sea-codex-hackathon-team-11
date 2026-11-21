@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+# Creates or updates the S3 bucket that holds OpenTofu state. Safe to re-run. Run before `bin/tf init`.
+# Bucket: private, versioned, SSE-S3 encrypted, HTTPS-only, old state versions expire after 90 days.
+set -euo pipefail
+# shellcheck source=bin/_lib.sh
+. "$(dirname "$0")/_lib.sh"
+
+backend="$root/backend.tf"
+bucket="$(sed -n 's/^ *bucket *= *"\(.*\)".*/\1/p' "$backend")"
+region="$(sed -n 's/^ *region *= *"\(.*\)".*/\1/p' "$backend")"
+[ -n "$bucket" ] && [ -n "$region" ] || die "could not read bucket/region from $backend"
+
+account="$(aws sts get-caller-identity --region "$region" --query Account --output text)"
+case "$bucket" in *"-$account") ;; *) die "bucket $bucket does not belong to account $account" ;; esac
+
+s3() { aws s3api "$@" --bucket "$bucket" --region "$region"; }
+
+if s3 head-bucket >/dev/null 2>&1; then
+  echo "bucket $bucket exists"
+else
+  s3 create-bucket --create-bucket-configuration "LocationConstraint=$region" >/dev/null
+  echo "created bucket $bucket"
+fi
+
+s3 put-public-access-block --public-access-block-configuration \
+  BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true
+s3 put-bucket-ownership-controls --ownership-controls 'Rules=[{ObjectOwnership=BucketOwnerEnforced}]'
+s3 put-bucket-versioning --versioning-configuration Status=Enabled
+s3 put-bucket-encryption --server-side-encryption-configuration \
+  '{"Rules":[{"ApplyServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"},"BucketKeyEnabled":true}]}'
+s3 put-bucket-lifecycle-configuration --lifecycle-configuration \
+  '{"Rules":[{"ID":"expire-old-state-versions","Status":"Enabled","Filter":{},"NoncurrentVersionExpiration":{"NoncurrentDays":90},"AbortIncompleteMultipartUpload":{"DaysAfterInitiation":7}}]}' >/dev/null
+s3 put-bucket-policy --policy "$(jq -cn --arg b "$bucket" '{
+  Version: "2012-10-17",
+  Statement: [{
+    Sid: "DenyInsecureTransport", Effect: "Deny", Principal: "*", Action: "s3:*",
+    Resource: ["arn:aws:s3:::\($b)", "arn:aws:s3:::\($b)/*"],
+    Condition: {Bool: {"aws:SecureTransport": "false"}}
+  }]}')"
+s3 put-bucket-tagging --tagging 'TagSet=[{Key=Project,Value=sea-hackathon},{Key=ManagedBy,Value=bin/bootstrap-state}]'
+
+echo "versioning: $(s3 get-bucket-versioning --query Status --output text)"
+echo "encryption: $(s3 get-bucket-encryption --query 'ServerSideEncryptionConfiguration.Rules[0].ApplyServerSideEncryptionByDefault.SSEAlgorithm' --output text)"
+echo "public access fully blocked: $(s3 get-public-access-block --query 'PublicAccessBlockConfiguration.[BlockPublicAcls,IgnorePublicAcls,BlockPublicPolicy,RestrictPublicBuckets]' --output text)"

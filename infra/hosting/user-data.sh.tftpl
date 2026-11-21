@@ -1,0 +1,41 @@
+#!/bin/bash
+# First-boot setup for the app server. Logs: /var/log/cloud-init-output.log
+set -euxo pipefail
+
+dnf install -y docker
+
+install -d /etc/docker
+cat > /etc/docker/daemon.json <<'JSON'
+{ "log-driver": "json-file", "log-opts": { "max-size": "10m", "max-file": "3" } }
+JSON
+
+install -d /usr/local/lib/docker/cli-plugins
+curl -fsSL -o /tmp/docker-compose \
+  "https://github.com/docker/compose/releases/download/v${compose_version}/docker-compose-linux-aarch64"
+echo "${compose_sha256}  /tmp/docker-compose" | sha256sum -c -
+install -m 0755 /tmp/docker-compose /usr/local/lib/docker/cli-plugins/docker-compose
+rm -f /tmp/docker-compose
+
+# 1 GiB swap so a memory spike on a 2 GiB box slows down instead of OOM-killing the app.
+if [ ! -f /swapfile ]; then
+  dd if=/dev/zero of=/swapfile bs=1M count=1024
+  chmod 600 /swapfile
+  mkswap /swapfile
+  echo '/swapfile none swap defaults 0 0' >> /etc/fstab
+fi
+swapon -a
+
+systemctl enable --now docker
+install -d -m 0700 /opt/app
+docker compose version
+
+# The SSM agent starts seconds after boot, often before the instance role's credentials work (IAM
+# propagation took ~80 s on 2026-11-21). It then backs off for a long time and the server never
+# registers. Wait until the role's credentials work, then restart the agent.
+set +x
+for _ in $(seq 1 60); do
+  aws sts get-caller-identity --region "${region}" >/dev/null 2>&1 && break
+  sleep 5
+done
+set -x
+systemctl restart amazon-ssm-agent

@@ -1,0 +1,4 @@
+# Used only when ingress_mode = "public". Caddy obtains a Let's Encrypt certificate for FQDN.
+{$FQDN} {
+	reverse_proxy app:{$APP_PORT}
+}

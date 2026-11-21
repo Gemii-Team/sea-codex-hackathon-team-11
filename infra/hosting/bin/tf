@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# OpenTofu in infra/hosting with AWS and Cloudflare credentials loaded from the repo-root .env.
+# Example (from infra/hosting): bin/tf plan -out=hosting.tfplan && bin/tf apply hosting.tfplan && rm hosting.tfplan
+set -euo pipefail
+# shellcheck source=bin/_lib.sh
+. "$(dirname "$0")/_lib.sh"
+[ -n "$CLOUDFLARE_API_TOKEN" ] || die "CLOUDFLARE_API_TOKEN is not set in .env"
+tofu -chdir="$root" "$@"
