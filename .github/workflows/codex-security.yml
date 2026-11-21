@@ -1,0 +1,54 @@
+# OpenAI Codex Security: a full-repository vulnerability scan, report-only.
+# Based on https://github.com/openai/codex-security/blob/main/github-action/examples/repository.yml
+# Findings go to Security → Code scanning. Full reports are not uploaded as artifacts, because
+# this repository is public and the reports contain source code and vulnerability details.
+# The job summary lists the top findings and is visible to anyone who can read this repository.
+#
+# Cost: an estimated $5 limit per scan (gpt-5.6-sol); requests in progress can exceed it.
+# Key: repository secret CODEX_SECURITY_API_KEY (an OpenAI API key).
+# Updating the Action: review the new action-vX.Y.Z release, copy its distribution commit SHA,
+# then run this workflow manually before relying on the schedule.
+name: Codex Security repository
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "23 7 * * 1" # Mondays at 07:23 UTC (14:23 Bangkok)
+
+permissions:
+  contents: read
+
+concurrency:
+  group: codex-security-repository
+  cancel-in-progress: false
+
+jobs:
+  security:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    permissions:
+      contents: read
+      security-events: write # upload SARIF to code scanning
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Scan the repository
+        id: security
+        uses: openai/codex-security@bf650710f36c16936324efe250a49cdd9f2da037 # action-v0.10.1
+        with:
+          scope: repository
+          model: gpt-5.6-sol
+          effort: high
+          max-cost: "5"
+          fail-on-severity: none
+        env:
+          OPENAI_API_KEY: ${{ secrets.CODEX_SECURITY_API_KEY }}
+      - name: Upload findings to code scanning
+        if: ${{ always() && steps.security.outputs.sarif-upload-ready == 'true' }}
+        uses: github/codeql-action/upload-sarif@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4.38.0
+        with:
+          sarif_file: ${{ steps.security.outputs.sarif-path }}
+          sha: ${{ steps.security.outputs.scanned-sha }}
+          ref: ${{ steps.security.outputs.analysis-ref }}
+          category: codex-security-repository

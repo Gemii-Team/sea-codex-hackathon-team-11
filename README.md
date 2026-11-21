@@ -122,6 +122,7 @@ The app is public, so the server alone protects the OpenAI key. None of these li
 - **Infrastructure as code:** OpenTofu in [`infra/hosting/`](infra/hosting/README.md), with state in a versioned, encrypted S3 bucket. The Yai Mali registry, tunnel route and DNS record are opt-in variables (`dev_registry_enabled`, `dev_route_enabled`).
 - **Yai Mali deploys** with [`yai-mali-web/deploy/deploy up`](yai-mali-web/README.md#deploy). It builds `linux/arm64`, pushes, starts the container by digest, and probes both this app and the main app on the private Docker network, refusing to finish if the main app changed. It prints the previous image for rollback. CI does not deploy it.
 - **CI** ([`.github/workflows/verify.yml`](.github/workflows/verify.yml)): every pull request runs `make check` (Go tests, the frontend build and Compose validation) and the OpenTofu format, validate and mocked tests. Merges to `main` deploy the main app.
+- **Security scanning** ([`.github/workflows/codex-security.yml`](.github/workflows/codex-security.yml)): [OpenAI Codex Security](https://github.com/openai/codex-security) scans the whole repository with `gpt-5.6-sol`, weekly and on demand, with an estimated $5 limit per scan. Findings appear under **Security → Code scanning**. The Action is pinned to a reviewed release commit, and its API key lives only in a repository secret.
 
 ## Run and test locally
 
