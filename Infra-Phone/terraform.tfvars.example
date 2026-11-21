@@ -1,0 +1,6 @@
+aws_region                     = "ap-southeast-1"
+name_prefix                    = "sea-team11-phone-demo"
+environment                    = "demo"
+owner                          = "team-11"
+interaction_log_retention_days = 7
+conversation_retention_days    = 30
