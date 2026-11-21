@@ -4,15 +4,25 @@ OpenAI Realtime handles live audio over WebRTC. The local app creates a contact 
 
 ## Run the demo
 
-1. Add `OPENAI_API_KEY` to the ignored `.env` file at the repository root. Use Node.js 26 and the AWS CLI. For S3 storage, authenticate with the `bsirikxm` profile in `ap-southeast-1`.
-2. Start the app from the repository root with the existing conversation bucket.
+1. Use Node.js 26. At the repository root, copy [`.env.sample`](../.env.sample) if you do not have an `.env` file, then set `OPENAI_API_KEY` in `.env`.
+
+   ```bash
+   test -e .env || (umask 077 && cp .env.sample .env)
+   ```
+
+2. Start the app from the repository root. Leave `PHONE_HISTORY_BUCKET` empty to save into `Infra-Phone/demo/.history/`.
+
+   ```bash
+   node --env-file=.env Infra-Phone/demo/server.mjs
+   ```
+
+   For S3, authenticate the configured AWS CLI profile and set `PHONE_HISTORY_BUCKET` in `.env`, or export it from OpenTofu before starting the server.
 
    ```bash
    export PHONE_HISTORY_BUCKET="$(tofu -chdir=Infra-Phone output -raw conversation_bucket_name)"
-   node Infra-Phone/demo/server.mjs
+   node --env-file=.env Infra-Phone/demo/server.mjs
    ```
 
-   For local storage, start the app with `PHONE_HISTORY_BUCKET` unset. It writes to the ignored `Infra-Phone/demo/.history/` directory. `PHONE_DEMO_PORT` can override the default port.
 3. Open [localhost:8783](http://localhost:8783/), enter an optional display name, and start a call with the microphone. Use a simulated conversation and allow the bot to respond before hanging up. Open the saved record and verify both speakers.
 
 S3 records use `v1/conversations/<contactId>.json` and the [v1 JSON Schema](contracts/conversations/v1/conversation.schema.json). Each record identifies its source as `openai_realtime`, `connect`, or `fixture`. The app stores text with digit sequences and email addresses masked. If a reply is interrupted, its transcript may be partial. The fixture includes a summary. Live calls start with `summaryStatus` set to `unavailable`, ready for a later summary processor.
