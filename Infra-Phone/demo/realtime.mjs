@@ -8,25 +8,43 @@ const instructions = `คุณคือพลอย ผู้ช่วยอั
 ห้ามขอ ยืนยัน หรือแจ้ง OTP, PIN, รหัสผ่าน, เลขบัตร, เบอร์โทร หรือเลขบัญชีของพลอย ห้ามอ้างว่าเป็นบุคคลหรือหน่วยงานจริง
 ถ้ามีคนขอข้อมูลอ่อนไหว ชวนทำธุรกรรม หรือให้เปิดลิงก์ ให้ปฏิเสธอย่างสุภาพและแนะนำให้ตรวจสอบผ่านช่องทางทางการ`;
 
-export async function startRealtime({ key, model, sdp, onEvent, onClose }) {
+export function createRealtimeOffer({ key, model, sdp, profile, transcriptionModel = 'gpt-4o-mini-transcribe' }) {
+  const role = profile ? `เล่นเป็นผู้รับสายในสายฝึกภาษาไทย ชื่อ ${profile.Name}
+บุคลิก ${profile.Persona} น้ำเสียง ${profile.Tone}
+เป้าหมาย ${profile.Objective} คำถามสำรอง ${profile.Question}
+แนวทางของตัวละคร ${profile.Instructions}
+ฟังคำล่าสุดของผู้โทรก่อน ตอบสิ่งที่เขาถามด้วยภาษาพูดสั้น ๆ ใช้สรรพนามตามบท แล้วหยุดให้เขาพูดต่อ
+ชวนให้เขาอธิบายข้ออ้างของเขาเอง ถามอย่างมากหนึ่งเรื่องที่ยังไม่รู้ ไม่ถามเรื่องที่เขาตอบไปแล้ว
+จำเฉพาะสิ่งที่ได้ยินชัด อย่าแต่งบริษัท จำนวนเงิน พัสดุ เหตุการณ์ก่อนหน้า หรือเลขอ้างอิง อย่าบอกว่าจำพัสดุได้ถ้ายังไม่ได้ยินรายละเอียด
+หากเขาบอกว่าจะคืนเงินและขอพร้อมเพย์ ให้ตอบตรง ๆ ว่าผูกเบอร์มือถือและจำได้แค่เลขท้ายสมมติ สอง เจ็ด สี่ สอง แล้วหยุด ถ้าไม่ถามอย่าเอ่ยเรื่องนี้เอง
+ไม่มีเลขเต็ม OTP PIN หรือลิงก์ให้ใช้ อย่าทำธุรกรรมหรืออ้างว่ากดอะไรสำเร็จ ใช้เหตุผลของตัวละครเมื่อคุยต่อ` : instructions;
+
   const form = new FormData();
   form.set('sdp', sdp);
   form.set('session', JSON.stringify({
     type: 'realtime',
     model,
-    instructions,
+    instructions: role + '\nถ้าได้ยินแต่เสียงห้อง เสียงกระทบ หรือเสียงสะท้อนของตัวเอง ให้รอเงียบ ๆ ถ้าได้ยินคนพูดแต่จับคำไม่ได้ ให้ขอให้พูดซ้ำสั้น ๆ ไม่เดาหรือเปลี่ยนเรื่อง',
+    ...(profile ? { max_output_tokens: 400 } : {}),
     output_modalities: ['audio'],
     audio: {
       input: {
-        transcription: { model: 'gpt-4o-mini-transcribe', language: 'th' },
-        turn_detection: { type: 'server_vad', create_response: true, interrupt_response: true },
+        noise_reduction: { type: 'far_field' },
+        transcription: { model: transcriptionModel, language: 'th' },
+        turn_detection: { type: 'server_vad', threshold: 0.62, prefix_padding_ms: 350, silence_duration_ms: 750,
+          create_response: true, interrupt_response: true },
       },
-      output: { voice: 'marin' },
+      output: { voice: profile?.Voice ?? 'marin' },
     },
   }));
 
   const headers = { Authorization: 'Bearer ' + key };
-  const response = await fetch(endpoint, { method: 'POST', headers, body: form, signal: AbortSignal.timeout(18_000) });
+  return fetch(endpoint, { method: 'POST', headers, body: form, signal: AbortSignal.timeout(18_000) });
+}
+
+export async function startRealtime({ key, model, sdp, onEvent, onClose }) {
+  const headers = { Authorization: 'Bearer ' + key };
+  const response = await createRealtimeOffer({ key, model, sdp });
   if (!response.ok) {
     const problem = await response.json().catch(() => ({}));
     const code = problem.error?.code;

@@ -7,7 +7,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { createTranscript } from './transcript.mjs';
 import { createEvidenceAccess } from './evidence.mjs';
 import { createHistoryStore } from './history.mjs';
-import { observeRealtime } from './realtime.mjs';
+import { createRealtimeOffer, observeRealtime } from './realtime.mjs';
 
 const directory = '/data';
 const config = { directory, bucket: process.env.PHONE_HISTORY_BUCKET, region: process.env.PHONE_HISTORY_REGION || 'ap-southeast-1' };
@@ -41,6 +41,27 @@ createServer(async (req, res) => {
     res.end(JSON.stringify(body));
   }
   try {
+    if (req.method === 'POST' && req.url === '/offer') {
+      const parts = [];
+      let length = 0;
+      for await (const chunk of req) {
+        length += chunk.length;
+        if (length > 64 * 1024) return reply(413, {});
+        parts.push(chunk);
+      }
+      const { SDP, ...profile } = JSON.parse(Buffer.concat(parts).toString());
+      const offer = await createRealtimeOffer({ key: process.env.OPENAI_API_KEY, model: 'gpt-realtime-2.1-mini',
+        transcriptionModel: 'gpt-transcribe', sdp: SDP, profile });
+      if (!offer.ok) {
+        console.error('OpenAI rejected offer', offer.status, offer.headers.get('x-request-id'));
+        await offer.body?.cancel();
+        return reply(422, {});
+      }
+      const location = offer.headers.get('location');
+      res.writeHead(201, { 'Content-Type': 'application/sdp', ...(location ? { Location: location } : {}) });
+      res.end(await offer.text());
+      return;
+    }
     if (req.url === '/healthz') return reply(200, { storage: store.kind });
     if (req.method === 'GET' && req.url === '/history') {
       return reply(200, [...(await store.list()).sort((a,b) => b.startedAt.localeCompare(a.startedAt)),

@@ -32,11 +32,20 @@
     voiceURI: '', openAIVoice: 'marin', voiceRate: 1, voicePitch: 1
   };
 
+  const ploy = {
+    ...emptyAgent, id: 'infra-phone-ploy', name: 'ป้าพลอย', business: 'สายฝึกมิจฉาชีพ',
+    persona: 'ป้าพลอย อายุ 68 ปี ใช้มือถือโทรหาหลานเป็นหลัก คุยเป็นกันเอง แทนตัวเองว่าป้า',
+    greeting: 'ฮัลโหล ป้าพลอยพูดจ้ะ ใครโทรมาจ๊ะ',
+    objective: 'ให้ผู้โทรเล่าด้วยตัวเองว่าติดต่อเรื่องอะไร ต้องการให้ป้าทำอะไร และอ้างข้อมูลอะไรสนับสนุน',
+    instructions: 'รับคำสั้น ๆ แล้วรอฟัง ถ้ามีคนอ้างว่ามีพัสดุ ให้สนใจว่าพัสดุอะไร หากเขาบอกแล้วให้ถามเฉพาะรายละเอียดที่ยังขาด ไม่เสนอชื่อบริษัทหรือยอดให้เลือก',
+    openingQuestion: 'หนูโทรมาเรื่องอะไรจ๊ะ'
+  };
+
   function loadAgents() {
     try {
       const saved = JSON.parse(localStorage.getItem(storageKey) ?? '[]');
-      if (!Array.isArray(saved)) return [];
-      const drafts = new Map();
+      if (!Array.isArray(saved)) return [ploy];
+      const drafts = new Map([[ploy.id, ploy]]);
       for (const entry of saved) {
         if (typeof entry?.id !== 'string' || !entry.id.trim()) continue;
         const draft = { ...emptyAgent };
@@ -56,7 +65,7 @@
       }
       return [...drafts.values()];
     } catch {
-      return [];
+      return [ploy];
     }
   }
 

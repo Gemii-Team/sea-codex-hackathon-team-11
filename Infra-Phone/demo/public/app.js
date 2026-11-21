@@ -214,7 +214,7 @@ async function startCall() {
   elements['call-status'].textContent = 'กำลังเปิดไมโครโฟน…';
 
   try {
-    call.mic = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true }, video: false });
+    call.mic = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: false, channelCount: 1 }, video: false });
     elements['call-status'].textContent = 'กำลังเชื่อมต่อสาย…';
     const peer = new RTCPeerConnection();
     call.peer = peer;
