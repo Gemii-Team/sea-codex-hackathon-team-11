@@ -17,6 +17,7 @@ func main() {
 	}
 	client := &http.Client{Timeout: 3 * time.Second}
 	routes := http.NewServeMux()
+	registerVoice(routes)
 	routes.HandleFunc("GET /api/v1/status", func(w http.ResponseWriter, r *http.Request) {
 		request, err := http.NewRequestWithContext(r.Context(), http.MethodGet, monitor.JoinPath("status").String(), nil)
 		if err != nil {
