@@ -1,0 +1,13 @@
+# Allow-list: only the runtime tree enters the image.
+**
+!backend/
+!backend/**
+!frontend/
+!frontend/**
+
+# Never ship tests, env files, or local debris even inside the allowed trees.
+**/*.test.mjs
+**/.env
+**/.env.*
+**/node_modules
+**/.DS_Store

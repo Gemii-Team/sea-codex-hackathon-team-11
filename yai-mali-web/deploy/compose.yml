@@ -1,0 +1,51 @@
+# The Yai Mali dev app: its own Compose project beside the main app and the Connect web-call PoC.
+# It joins the main stack's private network so cloudflared reaches it by service name, publishes no
+# port, and never shares a project, directory or secret file with the other two.
+# The OpenAI key is read as a raw value on the host; do not print `docker compose config` on EC2.
+name: sea-yai-mali-dev
+
+services:
+  yai-mali-dev:
+    image: ${IMAGE:?IMAGE is set by remote-deploy.sh}
+    env_file:
+      - path: dev.env
+        required: true
+        format: raw
+    environment:
+      NODE_ENV: production
+      PORT: "8080"
+      PUBLIC_ORIGIN: https://sea-hackathon-dev.voidbox.io
+      VOICE_CUTOFF_AT: "2026-11-21T16:59:00Z"
+      VOICE_STATE_DIR: /var/lib/yai-voice
+    expose:
+      - "8080"
+    networks: [edge]
+    restart: "no"
+    stop_grace_period: 30s
+    volumes:
+      - ./state:/var/lib/yai-voice
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 128
+    mem_limit: 256m
+    cpus: 0.5
+    # Dependency-free readiness check: Node itself, against the unauthenticated /healthz.
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:8080/healthz', { signal: AbortSignal.timeout(2000) }).then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))"
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+networks:
+  edge:
+    external: true
+    name: sea-hackathon_default

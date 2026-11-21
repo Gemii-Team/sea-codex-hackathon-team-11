@@ -31,6 +31,12 @@ mock_provider "cloudflare" {
 
 variables {
   budget_email = "alerts@example.com"
+
+  # Hermetic: terraform.tfvars (live settings) must not change what these runs assert.
+  poc_registry_enabled = true
+  poc_route_enabled    = false
+  dev_registry_enabled = true
+  dev_route_enabled    = false
 }
 
 run "registry_can_be_explicitly_disabled_before_teardown" {

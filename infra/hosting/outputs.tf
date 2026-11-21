@@ -47,3 +47,13 @@ output "poc_fqdn" {
   description = "Hostname the PoC is published on once poc_route_enabled is applied (planned name, not proof of DNS)."
   value       = local.poc_fqdn
 }
+
+output "dev_repository_url" {
+  description = "ECR repository of the Yai Mali dev app; null until dev_registry_enabled."
+  value       = one(aws_ecr_repository.dev[*].repository_url)
+}
+
+output "dev_fqdn" {
+  description = "Hostname the dev app is published on; null until dev_route_enabled (planned name, not proof of DNS)."
+  value       = var.dev_route_enabled ? local.dev_fqdn : null
+}

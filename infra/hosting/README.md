@@ -13,6 +13,8 @@ If your shared `.env` also contains **Connect Customer** or other app credential
 
 The `sea-hackathon/connect-web-call` ECR registry is already in this stack's state. Plan from a revision that declares and retains it; reject any unexpected registry deletion. The `call-sea-hackathon.voidbox.io` tunnel route is independently disabled by default.
 
+A second, independent sidecar, the Yai Mali dev app (`../../yai-mali-web/`), has its own switches: `dev_registry_enabled` (default on) creates the immutable `sea-hackathon/yai-mali-dev` ECR repository; `dev_route_enabled` (default off) publishes `sea-hackathon-dev.voidbox.io` as one more tunnel rule (after the PoC rule, before the final 404) plus one proxied CNAME. The route needs the registry and `ingress_mode = "tunnel"` and must not reuse `hostname` or `poc_hostname`; otherwise the plan fails. Review plans with `../../yai-mali-web/deploy/deploy plan-guard registry|route|route-off <plan>`. The instance role already reads `/sea-hackathon/*` SSM parameters and pulls from the account's ECR, so it needs no change.
+
 | Path | What it is |
 |---|---|
 | `*.tf` | OpenTofu: server, IAM role, ECR, budget, tunnel, DNS record. State in S3. |

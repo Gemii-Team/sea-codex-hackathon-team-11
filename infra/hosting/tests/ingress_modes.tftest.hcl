@@ -27,6 +27,12 @@ mock_provider "cloudflare" {
 
 variables {
   budget_email = "alerts@example.com"
+
+  # Hermetic: terraform.tfvars (live settings) must not change what these runs assert.
+  poc_registry_enabled = true
+  poc_route_enabled    = false
+  dev_registry_enabled = true
+  dev_route_enabled    = false
 }
 
 run "tunnel_mode_has_no_inbound_path" {

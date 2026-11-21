@@ -104,3 +104,28 @@ variable "poc_hostname" {
     error_message = "poc_hostname must be one DNS label (no dots)."
   }
 }
+
+# The Yai Mali dev app is a second sidecar beside the PoC, with its own registry and route switches.
+
+variable "dev_registry_enabled" {
+  description = "Create the dev app's immutable ECR repository. Disable only for an explicitly reviewed teardown."
+  type        = bool
+  default     = true
+}
+
+variable "dev_route_enabled" {
+  description = "Publish dev_hostname through the existing tunnel: one ingress rule before the final 404 (after the PoC rule, when both are on) plus one proxied CNAME. Needs dev_registry_enabled and ingress_mode = \"tunnel\"; any other combination fails the plan. Deploy and verify the origin first."
+  type        = bool
+  default     = false
+}
+
+variable "dev_hostname" {
+  description = "Single label under zone_name for the Yai Mali dev app. Its PUBLIC_ORIGIN is fixed to https://sea-hackathon-dev.voidbox.io."
+  type        = string
+  default     = "sea-hackathon-dev"
+
+  validation {
+    condition     = can(regex("^[a-z0-9-]+$", var.dev_hostname))
+    error_message = "dev_hostname must be one DNS label (no dots)."
+  }
+}
