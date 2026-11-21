@@ -45,8 +45,12 @@ The console polls control-plane health every 15 seconds. The monitor probes the 
 
 See the [hosting runbook](infra/hosting/README.md#github-actions) to enable AWS deployments after CI passes.
 
+## Web call demo
+
+Run the [Thai WebRTC demo with OpenAI Realtime and S3 history](Infra-Phone/README.md#run-the-demo) locally.
+
 ## Web call conversation data
 
 Use the [v1 JSON Schema](Infra-Phone/contracts/conversations/v1/conversation.schema.json) and [synthetic Thai conversation](Infra-Phone/contracts/conversations/v1/examples/demo-otp-request.json) to build the conversation list and detail views locally. Each JSON file represents one conversation. Render `turns` in array order and use `summary.title` and `summary.text` when `summaryStatus` is `ready`. Each `evidenceTurnIds` entry points to a `turns[].id` in the same record. If the summary is unavailable or failed, display the available turns and their transcript status.
 
-The planned private S3 object key is `v1/conversations/<contactId>.json`. The UI can use `source` to label synthetic fixtures. See the [Amazon Connect Web Calling plan](Infra-Phone/README.md) for the OpenTofu layout and demo setup.
+The private S3 object key is `v1/conversations/<contactId>.json`. The UI can use `source` to distinguish OpenAI Realtime, Amazon Connect, and synthetic fixtures. See the [infrastructure and demo setup](Infra-Phone/README.md) for the OpenTofu layout.

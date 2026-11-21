@@ -1,6 +1,7 @@
 # Secrets: credentials live in .env at the repo root; never commit it.
 .env
 .env.*
+!.env.sample
 *.csv
 .DS_Store
 

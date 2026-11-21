@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "Thai web call conversation",
-  "description": "A processed conversation from a Connect web call or a synthetic fixture for the UI.",
+  "description": "A processed web call conversation or a synthetic fixture for the UI.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -21,12 +21,14 @@
     "contactId": {
       "type": "string",
       "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*$",
-      "description": "The Connect contact ID or synthetic fixture ID. Also used as the object filename without the extension."
+      "description": "The ID issued by the application or the call provider. Also used as the object filename without the extension."
     },
     "source": {
-      "enum": ["connect", "fixture"],
-      "description": "Use fixture for handcrafted demo data and connect for captured web calls."
+      "enum": ["connect", "openai_realtime", "fixture"],
+      "description": "Identifies the producer of the transcript."
     },
+    "contactName": { "type": "string", "minLength": 1, "maxLength": 80 },
+    "evidenceCount": { "type": "integer", "minimum": 0, "description": "Number of separately stored caller statements selected for evidence review." },
     "channel": { "const": "web_call" },
     "locale": { "const": "th-TH" },
     "startedAt": {
