@@ -26,9 +26,13 @@ function save(call, interrupted) {
     const entries = call.transcript.evidence();
     if (interrupted && snapshot.transcriptStatus === 'complete') snapshot.transcriptStatus = 'partial';
     if (entries.length) await evidence.save({ contactId: call.id, startedAt: call.startedAt, entries });
+    const claims = snapshot.turns.filter(turn => turn.speaker === 'caller' &&
+      /จาก|บริษัท|ร้าน|ส่ง|พัสดุ|บาท|โอน|บัญชี|อ้างอิง|ค่าบริการ|คืนเงิน|ชำระ|ติดต่อ|รหัส/.test(turn.text));
+    const summary = claims.length ? { title: 'สิ่งที่ผู้โทรกล่าวอ้าง',
+      text: claims.map(turn => '“' + turn.text + '”').join('\n'), evidenceTurnIds: claims.map(turn => turn.id) } : null;
     await store.save({ schemaVersion: 1, source: 'openai_realtime', channel: 'web_call', locale: 'th-TH',
       contactId: call.id, startedAt: call.startedAt, ...snapshot, evidenceCount: entries.length,
-      summary: null, summaryStatus: 'unavailable' });
+      summary, summaryStatus: summary ? 'ready' : 'unavailable' });
     calls.delete(call.id);
     call.close?.();
   })().catch(error => { call.saving = null; throw error; });

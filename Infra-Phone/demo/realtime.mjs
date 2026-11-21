@@ -32,7 +32,7 @@ export function createRealtimeOffer({ key, model, sdp, profile, transcriptionMod
         noise_reduction: { type: 'far_field' },
         transcription: { model: transcriptionModel, language: 'th' },
         turn_detection: { type: 'server_vad', threshold: 0.62, prefix_padding_ms: 350, silence_duration_ms: 750,
-          create_response: profile?.AgentID !== 'infra-phone-ploy', interrupt_response: true },
+          create_response: profile?.AgentID !== 'infra-phone-ploy', interrupt_response: profile?.AgentID !== 'infra-phone-ploy' },
       },
       output: { voice: profile?.Voice ?? 'marin' },
     },

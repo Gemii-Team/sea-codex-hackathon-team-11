@@ -126,18 +126,42 @@
     channel.send(JSON.stringify(event));
   }
 
-  function ployReply(words, profile) {
+  function ployReply(words, current, profile) {
+    const heard = [...current.callerTurns.values()].filter(Boolean).join(' ');
+    const facts = [
+      ['organisation', /(?:โทรจาก|ติดต่อจาก|จากบริษัท|ชื่อร้าน|บริษัท)\s*[^\s]{2}/, 'หนูโทรจากร้านไหนจ๊ะ'],
+      ['amount', /(?:[๐-๙\d]|หนึ่ง|เอ็ด|สอง|สาม|สี่|ห้า|หก|เจ็ด|แปด|เก้า|สิบ|ร้อย|พัน)\s*(?:บาท|สตางค์)/, 'ยอดที่หนูบอกนี่เท่าไหร่จ๊ะ'],
+      ['reference', /(?:เลข|รหัส)(?:อ้างอิง|พัสดุ|เคส|รายการ)\s*(?:คือ|เป็น|หมายเลข)?\s*[A-Za-z๐-๙\d]/, 'มีเลขอ้างอิงของเรื่องนี้ไหมจ๊ะ']
+    ];
     let line;
-    if (/พร้อมเพย์|พร้อมเพ/.test(words) && /คืน|โอนให้/.test(words)) {
+    if (/พร้อมเพย์|พร้อมเพ/.test(words) && /คืน|โอนให้/.test(heard) && !current.asked.has('promptpay')) {
+      current.asked.add('promptpay');
       line = 'ผูกกับเบอร์มือถือจ้ะ ป้าจำได้แค่ท้าย สอง เจ็ด สี่ สอง';
-    } else if (/ตีกลับ|กลับมา/.test(words) && /ร้าน/.test(words)) {
+    } else if (/ตีกลับ|กลับมา/.test(words) && /ร้าน/.test(words) && !current.asked.has('parcel')) {
+      current.asked.add('parcel');
       line = /พัสดุ|สินค้า/.test(words) ? 'พัสดุอะไรตีกลับเหรอจ๊ะ' : 'อะไรกลับมาที่ร้านนะจ๊ะ ป้าได้ยินไม่ชัด';
+    } else if (/พัสดุ|ค่าส่ง|ค่าจัดส่ง|ค้าง|โอน|คืนเงิน|บาท|บริษัท|อ้างอิง|ตีกลับ/.test(heard)) {
+      const missing = facts.find(([key, pattern]) => !pattern.test(heard) && !current.asked.has(key));
+      if (missing) {
+        current.asked.add(missing[0]);
+        line = missing[2];
+      } else if (!current.asked.has('wrap')) {
+        line = 'ได้จ้ะ ป้าขอจดเรื่องนี้ไว้ก่อนนะ';
+        current.asked.add('wrap');
+      }
     }
     if (line) return 'พูดภาษาไทยเฉพาะประโยคนี้ตามตัวอักษร แล้วหยุดรอ: ' + line;
     return `คุณรับสายตามบท ${profile.Persona} น้ำเสียง ${profile.Tone} เป้าหมาย ${profile.Objective}
-ตอบคำถามล่าสุดด้วยประโยคสั้น ๆ ให้คนโทรอธิบายข้ออ้างต่อ ถ้าได้ยินไม่ชัด ให้ขอให้พูดซ้ำ
-ใช้เฉพาะรายละเอียดที่ผู้โทรบอกแล้ว ห้ามเติมชื่อร้าน จำนวนเงิน หรือวันเวลาเอง ห้ามให้ข้อมูลส่วนตัวจริงหรือทำธุรกรรม
-คำแนะนำตัวละคร: ${profile.Instructions}`;
+ถ้าถามเรื่องร้าน ยอด หรือเลขอ้างอิงไปแล้ว อย่าถามซ้ำ ตอบสิ่งที่เพิ่งได้ยินด้วยประโยคสั้น ๆ หากฟังไม่ชัด ขอให้พูดซ้ำครั้งเดียว
+ใช้เฉพาะสิ่งที่ผู้โทรบอก ห้ามแต่งรายละเอียดหรือให้ข้อมูลส่วนตัวจริง คำแนะนำตัวละคร: ${profile.Instructions}`;
+  }
+
+  function replyWhenQuiet(current, profile) {
+    if (status !== 'live' || current.speaking || current.generating || current.playing || !current.nextTurn) return;
+    const words = current.nextTurn;
+    current.nextTurn = '';
+    current.generating = true;
+    send(current.channel, { type: 'response.create', response: { instructions: ployReply(words, current, profile) } });
   }
 
   async function start() {
@@ -163,7 +187,7 @@
     let current;
     try {
       const peer = new RTCPeerConnection();
-      current = { peer, callerTurns: new Map() };
+      current = { peer, callerTurns: new Map(), asked: new Set() };
       call = current;
       const audioContext = new AudioContext();
       current.audioContext = audioContext;
@@ -186,7 +210,10 @@
       audioContext.createMediaStreamSource(stream).connect(destination);
       for (const track of stream.getTracks()) peer.addTrack(track, stream);
 
-      peer.ontrack = ({ track }) => {
+      peer.ontrack = ({ track, receiver }) => {
+        if ('jitterBufferTarget' in receiver) {
+          try { receiver.jitterBufferTarget = 120; } catch { /* Browser default buffering remains available. */ }
+        }
         const remote = new MediaStream([track]);
         audio.srcObject = remote;
         audioContext.createMediaStreamSource(remote).connect(destination);
@@ -208,7 +235,15 @@
       channel.onmessage = ({ data }) => {
         if (call !== current) return;
         const event = JSON.parse(data);
+        if (profile.AgentID === 'infra-phone-ploy') {
+          if (event.type === 'response.created') current.generating = true;
+          if (event.type === 'output_audio_buffer.started') current.playing = true;
+          if (event.type === 'response.done') current.generating = false;
+          if (['output_audio_buffer.stopped', 'output_audio_buffer.cleared'].includes(event.type)) current.playing = false;
+          if (['response.done', 'output_audio_buffer.stopped', 'output_audio_buffer.cleared'].includes(event.type)) replyWhenQuiet(current, profile);
+        }
         if (event.type === 'input_audio_buffer.speech_started') {
+          current.nextTurn = '';
           current.speaking = true;
           current.latestSpeakerItem = event.item_id;
         }
@@ -224,7 +259,8 @@
           current.callerTurns.set(event.item_id, transcript);
           if (profile.AgentID === 'infra-phone-ploy' && status === 'live' && firstResult &&
               current.latestSpeakerItem === event.item_id && !current.speaking && transcript) {
-            send(channel, { type: 'response.create', response: { instructions: ployReply(transcript, profile) } });
+            current.nextTurn = transcript;
+            replyWhenQuiet(current, profile);
           }
           pendingTurns = [...current.callerTurns.values()].filter((text) => text === null).length;
           if (status === 'summarizing' && !pendingTurns) requestSummary(current);
@@ -258,11 +294,18 @@
         const message = {
 
           409: 'สายเดโมกำลังใช้งานอยู่ ลองอีกครั้งหลังวางสาย หรือในอีกประมาณ ' + (Number(response.headers.get('Retry-After')) || 180) + ' วินาที',
-          429: 'ใช้โควตาครบ 25 ครั้งแล้ว กรุณาติดต่อทีมเดโม',
+          429: 'เวลาเสียงสดของโครงการหมดแล้ว',
           503: 'ยังไม่ได้เปิดเดโมเสียงบนเซิร์ฟเวอร์'
         }[response.status];
         throw new Error(message ?? 'เริ่มสาย OpenAI ไม่สำเร็จ');
       }
+      const maxSeconds = Number(response.headers.get('X-Voice-Max-Seconds')) || 180;
+      clearTimeout(current.timer);
+      current.timer = setTimeout(() => {
+        if (call !== current) return;
+        notice = 'หมดเวลาเดโม';
+        disconnect();
+      }, maxSeconds * 1000);
       current.recording = {
         url: '/api/v1/voice/recordings/' + encodeURIComponent(response.headers.get('X-Voice-Call-ID')),
         headers: {
@@ -345,13 +388,13 @@
   <h3>ซ้อมรับสายหลอกลวง</h3>
   <p class="muted">คุณเล่นเป็นผู้โทร ลองอ้างว่ามีค่าจัดส่งค้างอยู่ แล้วฟังว่า Agent ถามอะไรกลับมา</p>
   {#if status === 'idle' && availability}
-    <p class="muted" role="status">{availability.remaining === 0 ? 'โควตาสายสดครบแล้ว ยังลองตัวอย่างบทสนทนาได้' : availability.busy ? 'มีคนใช้สายเดโมอยู่ ปุ่มเริ่มคุยจะเปิดเมื่อสายว่าง' : 'สายว่าง'} · เหลือ {availability.remaining} ครั้ง</p>
-    {#if availability.busy || availability.remaining === 0}<a href="#preview">ลองบทสนทนาจำลองระหว่างรอ</a>{/if}
+    <p class="muted" role="status">{availability.secondsRemaining === 0 ? 'เวลาเสียงสดของโครงการหมดแล้ว ยังลองตัวอย่างบทสนทนาได้' : availability.busy ? 'มีคนใช้สายเดโมอยู่ ปุ่มเริ่มคุยจะเปิดเมื่อสายว่าง' : 'สายว่าง'} · เวลาเสียงสดคงเหลือ {Math.floor(availability.secondsRemaining / 60)} นาที {availability.secondsRemaining % 60} วินาที</p>
+    {#if availability.busy || availability.secondsRemaining === 0}<a href="#preview">ลองบทสนทนาจำลองระหว่างรอ</a>{/if}
   {/if}
   <label class="recording-consent"><input type="checkbox" bind:checked={consent} disabled={status !== 'idle'} /> ทุกคนในสายทดสอบยินยอมให้บันทึกเสียง</label>
   <div class="preview-actions">
     {#if status === 'idle'}
-      <button type="button" class="button primary" disabled={!consent || saving || availability?.busy || availability?.remaining === 0} onclick={start}>เปิดไมค์และเริ่มคุย</button>
+      <button type="button" class="button primary" disabled={!consent || saving || availability?.busy || availability?.secondsRemaining === 0} onclick={start}>เปิดไมค์และเริ่มคุย</button>
     {:else}
       {#if status === 'live'}
         <button type="button" class="button primary" onclick={finish}>จบสายและสรุป</button>
@@ -360,7 +403,7 @@
     {/if}
   </div>
   <audio bind:this={audio} autoplay></audio>
-  <p class="muted" role="status">{({ starting: 'กำลังเชื่อมต่อ', live: 'กำลังคุย · จำกัด 3 นาที', summarizing: 'กำลังสรุปบทสนทนา' })[status] ?? notice}</p>
+  <p class="muted" role="status">{({ starting: 'กำลังเชื่อมต่อ', live: 'กำลังคุย', summarizing: 'กำลังสรุปบทสนทนา' })[status] ?? notice}</p>
   {#if historyStatus}<p class="muted" role="status">{historyStatus}</p>{/if}
   {#if recordingStatus}<p class="muted" role="status">{recordingStatus}</p>{/if}
   {#if savedRecording}
