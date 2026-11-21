@@ -25,16 +25,25 @@
 
   let agents = $state(loadAgents());
   let agent = $state({ ...emptyAgent });
-  let page = $state('agents');
+  let page = $state('monitor');
   let scenario = $state('message');
   let tried = $state(false);
   let feedback = $state('');
+  let search = $state('');
+  const dateFormat = new Intl.DateTimeFormat('th-TH', { dateStyle: 'medium', timeStyle: 'short' });
+  const hasConnectDetails = (saved) => [saved.region, saved.instance, saved.flow, saved.number]
+    .every((value) => value?.trim());
+  let configured = $derived(agents.filter(hasConnectDetails).length);
+  let tested = $derived(agents.filter((saved) => saved.lastTest).length);
+  let visibleAgents = $derived(agents.filter((saved) => [saved.name, saved.business, saved.number]
+    .some((value) => value?.toLowerCase().includes(search.trim().toLowerCase()))));
 
   function edit(saved = emptyAgent) {
-    agent = { ...saved };
+    agent = { ...emptyAgent, ...saved };
+    scenario = 'message';
     tried = false;
     feedback = '';
-    page = 'agents';
+    page = 'editor';
   }
 
   function save(event) {
@@ -43,7 +52,10 @@
       feedback = 'กรุณากรอกชื่อและคำทักทาย';
       return;
     }
-    const draft = { ...$state.snapshot(agent), id: agent.id || crypto.randomUUID(), name: agent.name.trim() };
+    const draft = {
+      ...$state.snapshot(agent), id: agent.id || crypto.randomUUID(),
+      name: agent.name.trim(), updatedAt: new Date().toISOString()
+    };
     const next = agents.some(({ id }) => id === draft.id)
       ? agents.map((saved) => saved.id === draft.id ? draft : saved)
       : [...agents, draft];
@@ -56,33 +68,75 @@
       feedback = 'บันทึกร่างไม่ได้ กรุณาตรวจการตั้งค่าพื้นที่จัดเก็บของเบราว์เซอร์';
     }
   }
+
+  function runPreview() {
+    tried = true;
+    agent.lastTest = { scenario, at: new Date().toISOString() };
+  }
 </script>
 
 <div class="shell">
   <aside class="rail">
     <a class="brand" href="./"><span class="mark" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span><span>Wirachit<small>Voice workspace</small></span></a>
     <nav aria-label="เมนูหลัก">
-      <button class:active={page === 'agents'} aria-pressed={page === 'agents'} onclick={() => page = 'agents'}><span class="nav-icon" aria-hidden="true">◈</span>AI Agents</button>
-      <button class:active={page === 'health'} aria-pressed={page === 'health'} onclick={() => page = 'health'}><span class="nav-icon" aria-hidden="true">◉</span>สถานะระบบ</button>
+      <button class={{ active: page === 'monitor' }} aria-current={page === 'monitor' ? 'page' : undefined} onclick={() => page = 'monitor'}><span class="nav-icon" aria-hidden="true">◈</span>ติดตาม Agents</button>
+      <button class={{ active: page === 'editor' }} aria-current={page === 'editor' ? 'page' : undefined} onclick={() => edit()}><span class="nav-icon" aria-hidden="true">＋</span>สร้าง Agent</button>
+      <button class={{ active: page === 'health' }} aria-current={page === 'health' ? 'page' : undefined} onclick={() => page = 'health'}><span class="nav-icon" aria-hidden="true">◉</span>สถานะระบบ</button>
     </nav>
-    {#if agents.length}
-      <div class="saved">
-        <h2>ร่างที่บันทึก</h2>
-        {#each agents as saved (saved.id)}
-          <button class:active={page === 'agents' && saved.id === agent.id} aria-pressed={page === 'agents' && saved.id === agent.id} onclick={() => edit(saved)}>{saved.name}</button>
-        {/each}
-      </div>
-    {/if}
   </aside>
 
   {#if page === 'health'}
     <div class="content system-health"><Health /></div>
+  {:else if page === 'monitor'}
+    <main class="content" lang="th">
+      <div class="breadcrumb">Call Center <span aria-hidden="true">/</span> <strong>AI Agents</strong></div>
+      <header class="page-title">
+        <div><h1>Agent Studio</h1><p>สร้างและติดตามผู้ช่วยรับสายภาษาไทย</p></div>
+        <button class="button primary" onclick={() => edit()}>＋ สร้าง Agent</button>
+      </header>
+
+      <dl class="agent-metrics" aria-label="สรุป Agents">
+        <div class="card"><dt>ร่างทั้งหมด</dt><dd>{agents.length}</dd></div>
+        <div class="card"><dt>กรอกข้อมูล Connect ครบ</dt><dd>{configured}</dd></div>
+        <div class="card"><dt>บันทึกผลทดสอบจำลอง</dt><dd>{tested}</dd></div>
+      </dl>
+
+      <section class="card" aria-labelledby="agent-list">
+        <div class="list-heading">
+          <div><h2 id="agent-list">Agents</h2><p class="muted">ร่างและผลทดสอบที่บันทึกในเบราว์เซอร์นี้</p></div>
+          {#if agents.length}
+            <label>ค้นหา Agent<input type="search" placeholder="ชื่อ ธุรกิจ หรือเบอร์รับสาย" bind:value={search} /></label>
+          {/if}
+        </div>
+        {#if agents.length === 0}
+          <p class="empty-list">ยังไม่มี Agent ที่บันทึกไว้ เริ่มจากสร้าง Agent และลองบทสนทนาจำลองได้เลย</p>
+        {:else if visibleAgents.length === 0}
+          <p class="empty-list" role="status">ไม่พบ Agent ที่ตรงกับการค้นหา</p>
+        {:else}
+          <div class="agent-table">
+            <table aria-label="รายชื่อ Agents">
+              <thead><tr><th scope="col">Agent</th><th scope="col">Amazon Connect</th><th scope="col">ทดสอบล่าสุด</th><th scope="col">แก้ไขล่าสุด</th></tr></thead>
+              <tbody>
+                {#each visibleAgents as saved (saved.id)}
+                  <tr>
+                    <td><button class="agent-link" onclick={() => edit(saved)}>{saved.name}</button><small>{saved.business || '—'}</small></td>
+                    <td><span class={['setup-status', { configured: hasConnectDetails(saved) }]}>{hasConnectDetails(saved) ? 'กรอกข้อมูลครบ' : 'ยังกรอกไม่ครบ'}</span><small>{saved.number || '—'}</small></td>
+                    <td>{saved.lastTest ? scenarios[saved.lastTest.scenario]?.label : 'ยังไม่ได้ทดสอบ'}{#if saved.lastTest}<small>{dateFormat.format(new Date(saved.lastTest.at))}</small>{/if}</td>
+                    <td>{saved.updatedAt ? dateFormat.format(new Date(saved.updatedAt)) : '—'}</td>
+                  </tr>
+                {/each}
+              </tbody>
+            </table>
+          </div>
+        {/if}
+      </section>
+    </main>
   {:else}
     <main class="content" lang="th">
       <div class="breadcrumb">Call Center <span aria-hidden="true">/</span> <strong>AI Agents</strong></div>
       <header class="page-title">
-        <div><h1>Agent Studio</h1><p>ตั้งค่าผู้ช่วยรับสายภาษาไทยสำหรับ Amazon Connect</p></div>
-        <button class="button secondary" onclick={() => edit()}>＋ สร้าง Agent</button>
+        <div><h1>{agent.id ? 'แก้ไข Agent' : 'สร้าง Agent'}</h1><p>ตั้งค่าผู้ช่วยรับสายภาษาไทยสำหรับ Amazon Connect</p></div>
+        <button class="button secondary" onclick={() => page = 'monitor'}>กลับไปรายชื่อ Agents</button>
       </header>
 
       <div class="columns">
@@ -100,7 +154,7 @@
 
           <section class="card" aria-labelledby="connect">
             <h2 id="connect">Amazon Connect Customer</h2>
-            <p class="muted">ข้อมูลการเชื่อมต่อจะถูกเก็บในร่างนี้</p>
+          <p class="muted">ข้อมูลการเชื่อมต่อจะถูกเก็บในร่างนี้</p>
             <div class="fields">
               <label>AWS Region<input placeholder="ap-southeast-1" bind:value={agent.region} /></label>
               <label>Instance ID<input placeholder="Instance UUID" bind:value={agent.instance} /></label>
@@ -130,7 +184,8 @@
               <option value={key}>{item.label}</option>
             {/each}
           </select></label>
-          <button class="button secondary" onclick={() => tried = true}>ลองบทสนทนา</button>
+          <button class="button secondary" onclick={runPreview}>ลองบทสนทนา</button>
+          {#if tried}<p class="muted">บันทึกร่างเพื่อเก็บผลทดสอบในหน้าติดตาม Agents</p>{/if}
         </aside>
       </div>
     </main>
