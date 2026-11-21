@@ -1,5 +1,6 @@
 <script>
-  import { onDestroy } from 'svelte';
+  import { onDestroy, onMount } from 'svelte';
+  import { rememberCall } from './callHistory.js';
 
   let { agent } = $props();
   let samplePlayer;
@@ -22,11 +23,23 @@
     }
   }
 
-  let code = $state('');
+  let availability = $state(null);
+  async function refreshAvailability() {
+    try {
+      const res = await fetch('/api/v1/voice/status', { cache: 'no-store' });
+      availability = res.ok ? await res.json() : null;
+    } catch { availability = null; }
+  }
+  onMount(() => {
+    void refreshAvailability();
+    const timer = setInterval(() => {
+      if (status === 'idle' && !document.hidden) void refreshAvailability();
+    }, 5000);
+    return () => clearInterval(timer);
+  });
   let status = $state('idle');
   let notice = $state('');
   let summary = $state('');
-  let showCode = $state(false);
   let consent = $state(false);
   let historyStatus = $state('');
   let recordingStatus = $state('');
@@ -42,13 +55,15 @@
     call = undefined;
     clearTimeout(current.timer);
     clearTimeout(current.summaryTimer);
-    current.abort.abort();
-    current.peer.close();
     if (current.historyURL) {
       fetch(current.historyURL, { method: 'POST', headers: current.recording.headers, keepalive: true })
         .then((response) => { historyStatus = response.ok ? 'บันทึกในประวัติสายฝึกแล้ว' : 'บันทึกประวัติสายฝึกไม่สำเร็จ'; })
         .catch(() => { historyStatus = 'ยังยืนยันการบันทึกประวัติสายฝึกไม่ได้'; });
     }
+    if (current.recording) {
+      void endServerCall(current);
+    }
+    current.peer.close();
     if (current.recorder?.state === 'recording') {
       saving = true;
       current.recorder.stop();
@@ -58,6 +73,13 @@
     if (audio) audio.srcObject = null;
     status = 'idle';
     pendingTurns = 0;
+  }
+  async function endServerCall(current) {
+    try {
+      const res = await fetch(current.hangupURL, { method: 'POST', headers: current.recording.headers, keepalive: true });
+      if (!res.ok) notice = 'ตัดเสียงแล้ว เซิร์ฟเวอร์กำลังคืนสายเดโม';
+    } catch { notice = 'ตัดเสียงแล้ว กำลังตรวจสอบว่าสายว่างหรือยัง'; }
+    await refreshAvailability();
   }
   onDestroy(disconnect);
 
@@ -105,7 +127,7 @@
   }
 
   async function start() {
-    if (call || saving || !consent || !code.trim()) return;
+    if (call || saving || !consent) return;
     sampleRequest++;
     samplePlayer?.pause();
     sampleStatus = '';
@@ -127,7 +149,7 @@
     let current;
     try {
       const peer = new RTCPeerConnection();
-      current = { peer, abort: new AbortController(), callerTurns: new Map() };
+      current = { peer, callerTurns: new Map() };
       call = current;
       const audioContext = new AudioContext();
       current.audioContext = audioContext;
@@ -203,14 +225,15 @@
       }, 180_000);
       const response = await fetch('/api/v1/voice/calls', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Voice-Demo-Code': code.trim() },
-        body: JSON.stringify({ ...profile, SDP: offer.sdp }),
-        signal: current.abort.signal
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...profile, SDP: offer.sdp })
       });
       if (!response.ok) {
+        void refreshAvailability();
         const message = {
-          401: 'รหัสเข้าทดสอบไม่ถูกต้อง',
-          429: 'มีสายเดโมอยู่หรือใช้โควตาครบแล้ว',
+
+          409: 'สายเดโมกำลังใช้งานอยู่ ลองอีกครั้งหลังวางสาย หรือในอีกประมาณ ' + (Number(response.headers.get('Retry-After')) || 180) + ' วินาที',
+          429: 'ใช้โควตาครบ 25 ครั้งแล้ว กรุณาติดต่อทีมเดโม',
           503: 'ยังไม่ได้เปิดเดโมเสียงบนเซิร์ฟเวอร์'
         }[response.status];
         throw new Error(message ?? 'เริ่มสาย OpenAI ไม่สำเร็จ');
@@ -218,11 +241,16 @@
       current.recording = {
         url: '/api/v1/voice/recordings/' + encodeURIComponent(response.headers.get('X-Voice-Call-ID')),
         headers: {
-          'X-Voice-Demo-Code': code.trim(),
           'X-Voice-Recording-Token': response.headers.get('X-Voice-Recording-Token')
         }
       };
+      current.hangupURL = '/api/v1/voice/calls/' + encodeURIComponent(response.headers.get('X-Voice-Call-ID')) + '/hangup';
+      if (call !== current) {
+        await endServerCall(current);
+        return;
+      }
       if (response.headers.get('X-Phone-History') === 'true') {
+        rememberCall(response.headers.get('X-Voice-Call-ID'), response.headers.get('X-Voice-Recording-Token'), profile.Name);
         current.historyURL = '/api/v1/phone/finish/' + encodeURIComponent(response.headers.get('X-Voice-Call-ID'));
       } else {
         historyStatus = 'สายนี้ยังไม่ได้เชื่อมบริการประวัติสายฝึก';
@@ -274,6 +302,8 @@
   }
 </script>
 
+<svelte:window onpagehide={disconnect} />
+
 <section class="card voice-demo" aria-labelledby="voice-demo-title">
   <h2 id="voice-demo-title">เสียงของ Agent</h2>
   <p class="muted">กดเพื่อฟังคำทักทายตัวอย่างและเลือกเสียงสำหรับคุยสด</p>
@@ -289,12 +319,14 @@
   {#if sampleStatus}<p class="muted" role="status">{sampleStatus}</p>{/if}
   <h3>ซ้อมรับสายหลอกลวง</h3>
   <p class="muted">คุณเล่นเป็นผู้โทร ลองอ้างว่ามีค่าจัดส่งค้างอยู่ แล้วฟังว่า Agent ถามอะไรกลับมา</p>
-  <label>รหัสเข้าทดสอบ<input type={showCode ? 'text' : 'password'} autocomplete="off" spellcheck="false" bind:value={code} disabled={status !== 'idle'} /></label>
-  <label class="recording-consent"><input type="checkbox" bind:checked={showCode} /> แสดงรหัส</label>
+  {#if status === 'idle' && availability}
+    <p class="muted" role="status">{availability.remaining === 0 ? 'โควตาสายสดครบแล้ว ยังลองตัวอย่างบทสนทนาได้' : availability.busy ? 'มีคนใช้สายเดโมอยู่ ปุ่มเริ่มคุยจะเปิดเมื่อสายว่าง' : 'สายว่าง'} · เหลือ {availability.remaining} ครั้ง</p>
+    {#if availability.busy || availability.remaining === 0}<a href="#preview">ลองบทสนทนาจำลองระหว่างรอ</a>{/if}
+  {/if}
   <label class="recording-consent"><input type="checkbox" bind:checked={consent} disabled={status !== 'idle'} /> ทุกคนในสายทดสอบยินยอมให้บันทึกเสียง</label>
   <div class="preview-actions">
     {#if status === 'idle'}
-      <button type="button" class="button primary" disabled={!code.trim() || !consent || saving} onclick={start}>เปิดไมค์และเริ่มคุย</button>
+      <button type="button" class="button primary" disabled={!consent || saving || availability?.busy || availability?.remaining === 0} onclick={start}>เปิดไมค์และเริ่มคุย</button>
     {:else}
       {#if status === 'live'}
         <button type="button" class="button primary" onclick={finish}>จบสายและสรุป</button>

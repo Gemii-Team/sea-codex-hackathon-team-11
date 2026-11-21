@@ -1,7 +1,6 @@
 package main
 
 import (
-	"crypto/hmac"
 	"io"
 	"net/http"
 	"os"
@@ -12,21 +11,22 @@ import (
 
 var phoneID = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$`)
 
-func registerPhoneHistory(routes *http.ServeMux, authorized func(*http.Request) bool, token func(string) string) func(string) bool {
+func registerPhoneHistory(routes *http.ServeMux, authorized func(*http.Request) bool, callOwner func(*http.Request, string) bool) func(string) bool {
 	base := strings.TrimRight(os.Getenv("PHONE_HISTORY_URL"), "/")
 	client := &http.Client{Timeout: 9 * time.Second}
 	forward := func(method, operation string) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
-			if !authorized(r) {
+			id := r.PathValue("id")
+			ownHistory := operation == "history" && (id == "demo-otp-request" || callOwner(r, id))
+			if operation != "finish" && !ownHistory && !authorized(r) {
 				http.Error(w, "Team access required", http.StatusUnauthorized)
 				return
 			}
-			id := r.PathValue("id")
 			if id != "" && !phoneID.MatchString(id) {
 				http.NotFound(w, r)
 				return
 			}
-			if operation == "finish" && !hmac.Equal([]byte(r.Header.Get("X-Voice-Recording-Token")), []byte(token(id))) {
+			if operation == "finish" && !callOwner(r, id) {
 				http.Error(w, "Invalid call token", http.StatusForbidden)
 				return
 			}
