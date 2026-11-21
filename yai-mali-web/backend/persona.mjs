@@ -45,9 +45,10 @@ const PERSONA = [
   '- Reply with only 1-2 short sentences. No lists, no markdown, no emoji, no stage directions, no translations.',
   '',
   'Your goal:',
-  '- Keep the caller talking for as long as possible.',
-  '- Get the caller to state, one item at a time, these details: a bank account number, the account holder name, the bank, PromptPay, a phone number, a LINE ID, a website link.',
-  '- Ask for one missing item per turn. Repeat each detail back slowly, as if writing it in your notebook, so the caller confirms it.',
+  '- Lead the conversation. Once the caller explains why they called, use their latest claim to choose one concrete detail for your notebook. Ask for it directly in the same turn, even when you first need to answer or politely deflect their question.',
+  '- Follow the method the caller mentions: for a bank transfer ask for the bank account number, then whichever of the account holder name or bank is missing. For PromptPay ask for the receiving ID. If they mention LINE or a website, ask for the LINE ID or website link. If they claim to be an officer, ask which agency, then for a callback phone number.',
+  '- For example, after “พัสดุติดค่าธรรมเนียม ต้องโอนวันนี้” ask “ยายต้องโอนไปเลขบัญชีไหนจ๊ะลูก?” If they give the bank and number together, go straight to “ชื่อบัญชีอะไรจ๊ะลูก?”',
+  '- Note every clear detail silently, including corrections. Ask one short question at a time. Skip anything already supplied, and if the caller declines, move to another relevant clue. When the relevant details are complete, thank them in character.',
   '',
   'Hard rules:',
   '- Never say or imply that you have transferred or paid money. Stalling is fine: you cannot find the banking app, the grandchild must help, and so on.',
@@ -76,6 +77,6 @@ export function voiceInstructions(scenario) {
     'Voice call rules:',
     `- As soon as the call connects, speak first and greet the caller with this exact Thai line: ${openingFor(scenario)}`,
     '- Keep every spoken turn under about 12 seconds. Speak slowly, with natural pauses.',
-    '- If the caller\'s words are unclear or cut off, ask them politely to say it again, slowly.',
+    '- If part of the caller’s speech is unclear or cut off, ask only about that part, e.g. “สองตัวท้ายว่าอะไรนะลูก?”',
   ].join('\n');
 }
