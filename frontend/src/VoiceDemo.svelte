@@ -19,6 +19,7 @@
     const current = call;
     call = undefined;
     clearTimeout(current.timer);
+    clearTimeout(current.summaryTimer);
     current.abort.abort();
     current.peer.close();
     if (current.recorder?.state === 'recording') {
@@ -133,12 +134,14 @@
         if (call !== current) return;
         current.recorder.start();
         status = 'live';
-        send(channel, { type: 'response.create', response: { instructions: 'กล่าวคำทักทายตามโปรไฟล์ แล้วรอให้ผู้โทรพูด' } });
+        send(channel, { type: 'response.create', response: { instructions: 'พูดภาษาไทย แนะนำว่าคุณเป็นผู้ช่วย AI และกล่าวคำทักทายนี้ แล้วรอให้ผู้โทรพูด: ' + profile.Greeting } });
       };
       channel.onmessage = ({ data }) => {
         if (call !== current) return;
         const event = JSON.parse(data);
+        if (event.type === 'input_audio_buffer.speech_started') current.speaking = true;
         if (event.type === 'input_audio_buffer.committed') {
+          current.speaking = false;
           if (!current.callerTurns.has(event.item_id)) current.callerTurns.set(event.item_id, null);
           pendingTurns = [...current.callerTurns.values()].filter((text) => text === null).length;
         }
@@ -146,6 +149,7 @@
             event.type === 'conversation.item.input_audio_transcription.failed') {
           current.callerTurns.set(event.item_id, event.transcript?.trim() ?? '');
           pendingTurns = [...current.callerTurns.values()].filter((text) => text === null).length;
+          if (status === 'summarizing' && !pendingTurns) requestSummary(current);
         }
         if (event.type === 'response.done' && event.response.metadata?.purpose === 'demo-summary') {
           const result = event.response.output.flatMap((item) => item.content ?? [])
@@ -198,18 +202,30 @@
 
   function finish() {
     if (status !== 'live' || call.channel.readyState !== 'open') return;
-    const callerText = [...call.callerTurns.values()].filter(Boolean).join('\n');
-    const callerInput = callerText
-      ? [{ type: 'message', role: 'user', content: [{ type: 'input_text', text: callerText }] }]
-      : [...call.callerTurns.keys()].map((id) => ({ type: 'item_reference', id }));
+    const current = call;
+    status = 'summarizing';
+    current.stream.getAudioTracks().forEach((track) => { track.enabled = false; });
+    if (current.speaking || pendingTurns) {
+      current.summaryTimer = setTimeout(() => requestSummary(current), 8000);
+      if (current.speaking) send(current.channel, { type: 'input_audio_buffer.commit' });
+    } else {
+      requestSummary(current);
+    }
+  }
+
+  function requestSummary(current) {
+    if (call !== current || current.summaryRequested) return;
+    current.summaryRequested = true;
+    clearTimeout(current.summaryTimer);
+    const callerInput = [...current.callerTurns.entries()].map(([id, text]) => text
+      ? { type: 'message', role: 'user', content: [{ type: 'input_text', text }] }
+      : { type: 'item_reference', id });
     if (!callerInput.length) {
       notice = 'จบสายแล้ว · ไม่มีคำพูดจากผู้โทรที่ถอดเสียงได้';
       disconnect();
       return;
     }
-    status = 'summarizing';
-    call.stream.getAudioTracks().forEach((track) => { track.enabled = false; });
-    send(call.channel, {
+    send(current.channel, {
       type: 'response.create',
       response: {
         conversation: 'none',
@@ -236,7 +252,7 @@
       <button type="button" class="button primary" disabled={!code.trim() || !consent || saving} onclick={start}>เปิดไมค์และเริ่มคุย</button>
     {:else}
       {#if status === 'live'}
-        <button type="button" class="button primary" disabled={pendingTurns > 0} onclick={finish}>จบสายและสรุป</button>
+        <button type="button" class="button primary" onclick={finish}>จบสายและสรุป</button>
       {/if}
       <button type="button" class="button secondary" onclick={disconnect}>ตัดสาย</button>
     {/if}
