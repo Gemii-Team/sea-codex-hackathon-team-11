@@ -6,10 +6,11 @@ mock_provider "aws" {
   mock_data "aws_caller_identity" {
     defaults = { account_id = "086971655102" }
   }
-  mock_resource "aws_connect_instance" {
+  mock_data "aws_connect_instance" {
     defaults = {
-      id  = "0f1e2d3c-4b5a-4968-8776-5a4b3c2d1e0f"
-      arn = "arn:aws:connect:ap-southeast-1:086971655102:instance/0f1e2d3c-4b5a-4968-8776-5a4b3c2d1e0f"
+      instance_alias        = "sea-team11-phone-demo"
+      status                = "ACTIVE"
+      inbound_calls_enabled = true
     }
   }
   mock_resource "aws_connect_contact_flow" {
@@ -27,16 +28,6 @@ mock_provider "aws" {
   }
 }
 
-run "alias_must_be_project_specific" {
-  command = plan
-
-  variables {
-    instance_alias = "demo"
-  }
-
-  expect_failures = [var.instance_alias]
-}
-
 run "hosting_account_credentials_are_rejected" {
   command = plan
 
@@ -47,26 +38,15 @@ run "hosting_account_credentials_are_rejected" {
   expect_failures = [data.aws_caller_identity.connect]
 }
 
-run "instance_is_inbound_only_and_connect_managed" {
-  command = apply
+run "inactive_instance_is_rejected" {
+  command = plan
 
-  assert {
-    condition = (
-      aws_connect_instance.this.identity_management_type == "CONNECT_MANAGED" &&
-      aws_connect_instance.this.inbound_calls_enabled == true &&
-      aws_connect_instance.this.outbound_calls_enabled == false &&
-      aws_connect_instance.this.early_media_enabled == false
-    )
-    error_message = "the instance must be Connect-managed, inbound only, with no outbound calling or early media"
+  override_data {
+    target = data.aws_connect_instance.team
+    values = { instance_alias = "sea-team11-phone-demo", status = "FAILED", inbound_calls_enabled = true }
   }
-  assert {
-    condition = (
-      aws_connect_instance.this.contact_lens_enabled == false &&
-      aws_connect_instance.this.contact_flow_logs_enabled == false &&
-      aws_connect_instance.this.multi_party_conference_enabled == false
-    )
-    error_message = "analytics, flow logs and conferencing must stay off"
-  }
+
+  expect_failures = [data.aws_connect_instance.team]
 }
 
 run "flow_is_the_greeting_then_disconnect" {
@@ -75,9 +55,9 @@ run "flow_is_the_greeting_then_disconnect" {
   assert {
     condition = (
       aws_connect_contact_flow.greeting.type == "CONTACT_FLOW" &&
-      aws_connect_contact_flow.greeting.instance_id == aws_connect_instance.this.id
+      aws_connect_contact_flow.greeting.instance_id == "de120632-5aca-4f3e-96fa-5d201b7f3708"
     )
-    error_message = "the flow must be an ordinary inbound CONTACT_FLOW on the dedicated instance"
+    error_message = "the greeting must be a separate inbound flow on the team's existing instance"
   }
   assert {
     condition = (
@@ -119,8 +99,8 @@ run "outputs_are_the_ids_the_operator_needs" {
 
   assert {
     condition = (
-      output.instance_id == "0f1e2d3c-4b5a-4968-8776-5a4b3c2d1e0f" &&
-      output.admin_url == "https://sea-hackathon-team-11-web-call-5102.my.connect.aws/" &&
+      output.instance_id == "de120632-5aca-4f3e-96fa-5d201b7f3708" &&
+      output.admin_url == "https://sea-team11-phone-demo.my.connect.aws/" &&
       output.flow_id == "9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d"
     )
     error_message = "outputs must be the instance ID, its admin URL and the bare flow ID"

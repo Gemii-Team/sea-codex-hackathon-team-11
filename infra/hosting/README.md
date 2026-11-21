@@ -11,6 +11,8 @@ needs *Account → Cloudflare Tunnel → Edit* and *Zone → DNS → Edit* on `v
 
 If your shared `.env` also contains **Connect Customer** or other app credentials, run hosting commands through `../../connect-web-call/bin/with-aws hosting`, e.g. `../../connect-web-call/bin/with-aws hosting bin/tf plan`. This checks the hosting account, passes only hosting credentials, and accepts `KEY = value` without evaluating the file as shell. The legacy unwrapped commands expect a trusted shell-compatible hosting-only file.
 
+The `sea-hackathon/connect-web-call` ECR registry is already in this stack's state. Plan from a revision that declares and retains it; reject any unexpected registry deletion. The `call-sea-hackathon.voidbox.io` tunnel route is independently disabled by default.
+
 | Path | What it is |
 |---|---|
 | `*.tf` | OpenTofu: server, IAM role, ECR, budget, tunnel, DNS record. State in S3. |

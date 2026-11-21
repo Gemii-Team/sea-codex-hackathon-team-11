@@ -1,7 +1,4 @@
-# Provisions only the Connect destination for the browser-call proof: one inbound-only CONNECT_MANAGED
-# instance and one published inbound flow (greeting, then disconnect). No phone numbers, no outbound
-# calling, no recording or transcript storage, no S3, no IAM, no users. The widget, its signing key and the
-# first admin login are created by an operator outside OpenTofu and never enter this state (see README.md).
+# The team's instance is a read-only dependency. This state owns only the PoC flow.
 
 locals {
   flow_name    = "team-eleven-web-call-greeting"
@@ -19,22 +16,14 @@ data "aws_caller_identity" "connect" {
   }
 }
 
-# Inbound on, outbound off. Every instance attribute the provider writes is explicit so nothing relies on a
-# provider default: no outbound or early media, no Contact Lens analytics, no flow logs, no conferencing.
-# Do not recreate this instance to work around a failed create: Connect limits instance creates and
-# deletes. Read the error, fix its cause, and apply again.
-resource "aws_connect_instance" "this" {
-  identity_management_type       = "CONNECT_MANAGED"
-  instance_alias                 = var.instance_alias
-  inbound_calls_enabled          = true
-  outbound_calls_enabled         = false
-  early_media_enabled            = false
-  contact_lens_enabled           = false
-  contact_flow_logs_enabled      = false
-  multi_party_conference_enabled = false
+data "aws_connect_instance" "team" {
+  instance_id = "de120632-5aca-4f3e-96fa-5d201b7f3708"
 
-  tags = {
-    Name = var.instance_alias
+  lifecycle {
+    postcondition {
+      condition     = self.instance_alias == "sea-team11-phone-demo" && self.status == "ACTIVE" && self.inbound_calls_enabled
+      error_message = "Expected the existing, active, inbound-enabled sea-team11-phone-demo instance."
+    }
   }
 
   depends_on = [data.aws_caller_identity.connect]
@@ -43,7 +32,7 @@ resource "aws_connect_instance" "this" {
 # An ordinary inbound flow. The provider cannot set or read a flow's publication status, so
 # bin/verify-flow must confirm PUBLISHED after the first apply.
 resource "aws_connect_contact_flow" "greeting" {
-  instance_id = aws_connect_instance.this.id
+  instance_id = data.aws_connect_instance.team.instance_id
   name        = local.flow_name
   description = "Plays the Team Eleven greeting, then disconnects."
   type        = "CONTACT_FLOW"

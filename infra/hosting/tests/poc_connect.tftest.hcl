@@ -1,5 +1,5 @@
 # Offline: both providers are mocked, nothing calls AWS or Cloudflare.
-# The Connect web-call PoC has two independent switches, both off by default:
+# The registry is retained by default; the route stays off until explicitly enabled.
 #   poc_registry_enabled  its own immutable ECR repository
 #   poc_route_enabled     one tunnel ingress rule plus one proxied CNAME (tunnel mode only)
 # Any route that has no repository or no tunnel behind it must fail the plan, not degrade quietly.
@@ -33,8 +33,12 @@ variables {
   budget_email = "alerts@example.com"
 }
 
-run "poc_is_off_by_default" {
+run "registry_can_be_explicitly_disabled_before_teardown" {
   command = apply
+
+  variables {
+    poc_registry_enabled = false
+  }
 
   assert {
     condition     = length(aws_ecr_repository.poc) == 0 && length(aws_ecr_lifecycle_policy.poc) == 0
@@ -69,10 +73,6 @@ run "poc_is_off_by_default" {
 
 run "registry_alone_creates_only_an_immutable_repo" {
   command = apply
-
-  variables {
-    poc_registry_enabled = true
-  }
 
   assert {
     condition = (
@@ -185,7 +185,8 @@ run "route_without_registry_fails_closed" {
   command = plan
 
   variables {
-    poc_route_enabled = true
+    poc_registry_enabled = false
+    poc_route_enabled    = true
   }
 
   expect_failures = [cloudflare_dns_record.poc]
@@ -207,8 +208,9 @@ run "route_in_public_mode_without_registry_fails_closed" {
   command = plan
 
   variables {
-    ingress_mode      = "public"
-    poc_route_enabled = true
+    ingress_mode         = "public"
+    poc_registry_enabled = false
+    poc_route_enabled    = true
   }
 
   expect_failures = [cloudflare_dns_record.poc]

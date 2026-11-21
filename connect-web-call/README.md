@@ -6,7 +6,7 @@ One question: can a teammate call Amazon Connect from a browser and hear an answ
 
 **After rollout:** open `https://call-sea-hackathon.voidbox.io` in a supported browser. Sign in as `team` with the **demo password**, not an AWS login. Open the AWS widget, start the audio call, and allow microphone access. Use headphones or speakers; let the flow finish playing and disconnect. The widget owns call status and hang-up; the page doesn't claim a connection just because the server issued a token.
 
-Record UTC start/end and whether you heard the exact greeting. In the **PoC instance**, an authorized operator uses Contact Search for channel `VOICE`, initiation `WEBRTC_API`, and that narrow time window. Match the contact ID and disconnect timestamp (run the proof with no concurrent testers). Only the audible greeting **plus** the matching contact record proves this path. This greeting doesn't test speech recognition or bidirectional conversation. Do not save audio, credentials, JWTs or full browser/network logs as proof. See the [widget setup](https://docs.aws.amazon.com/connect/latest/adminguide/config-com-widget1.html) and [workstation/network requirements](https://docs.aws.amazon.com/connect/latest/adminguide/videocalling-networking-requirements.html).
+Record UTC start/end and whether you heard the exact greeting. In `sea-team11-phone-demo`, use Contact Search for channel `VOICE` and initiation `WEBRTC_API`. Match the contact ID to the PoC test; if concurrent calls make attribution ambiguous, don't count it as proof. The greeting proves remote playback, not speech recognition. Don't save audio, credentials, JWTs or full network logs. See [widget setup](https://docs.aws.amazon.com/connect/latest/adminguide/config-com-widget1.html) and [network requirements](https://docs.aws.amazon.com/connect/latest/adminguide/videocalling-networking-requirements.html).
 
 ## Run locally
 
@@ -26,18 +26,16 @@ Tools: AWS CLI v2, OpenTofu ≥1.10, Python 3, jq, Docker with buildx, and the e
 w=connect-web-call/bin/with-aws
 umask 077
 $w infra tofu -chdir=connect-web-call/infra init
-$w infra tofu -chdir=connect-web-call/infra plan -out=connect.tfplan
-$w hosting infra/hosting/bin/tf init
-$w hosting infra/hosting/bin/tf plan -var=poc_registry_enabled=true -out=poc-registry.tfplan
-connect-web-call/deploy/deploy plan-guard registry infra/hosting/poc-registry.tfplan
+$w infra tofu -chdir=connect-web-call/infra plan -out=team-greeting.tfplan
+$w infra tofu -chdir=connect-web-call/infra show -json team-greeting.tfplan | connect-web-call/infra/bin/assert-additions-only
 ```
 
-The first plan must target Singapore in the **Connect** account, with its own key `connect-web-call/terraform.tfstate` in the **hosting** state bucket. It must add only the dedicated instance and its greeting flow. Do not initialize against `Infra-Phone/terraform.tfstate` or import an existing teammate instance. The hosting plan should add only the dedicated ECR resources, with routing still off. Inspect each with `tofu -chdir=<its-root> show <plan-file>` privately (plan binaries may contain sensitive data). Stop on unrelated changes or replacement. **Obtain explicit approval before applying each saved plan.** Apply the exact reviewed file using the corresponding wrapper; delete the file after a successful apply. Keep registry/route variables in your hosting `terraform.tfvars` for subsequent plans when activated; otherwise an unrelated default-off hosting plan may propose their removal. The existing hosting budget doesn't cover usage on the Connect account.
+The Connect root reads the team's existing Singapore instance and creates only the PoC greeting flow. It uses its own `connect-web-call/terraform.tfstate` key; never import the instance or point this root at `Infra-Phone/terraform.tfstate`. Obtain approval of the exact saved plan before applying it and remove the plan after a successful apply. The hosting registry is already provisioned; keep it enabled and leave the route off until the authenticated origin passes its checks.
 
 ## Operator: widget and credentials
 
-1. Use the PoC outputs for instance and greeting flow; confirm the flow is published. `CreateInstance` does not create an admin login. The Connect account owner can use IAM-authorized `ListSecurityProfiles`, `ListRoutingProfiles` and `CreateUser` outside IaC for their first Connect-managed admin (the instance's `Admin` profile, default routing profile and private password). No administrator password in argv, source, state or chat. Use an authorized operator if the keys lack those permissions; don't widen permissions automatically.
-2. In the **Connect admin site** open **Channels → Communication widgets**, create a Web Calling widget for the published PoC flow, **audio only**. Allow `https://call-sea-hackathon.voidbox.io` and turn **request security on**. Save. Use the real generated snippet and security key, not an AWS key or an example from a blog. AWS documents the [authenticated widget callback and JWT claims](https://docs.aws.amazon.com/connect/latest/adminguide/optional-widget-steps.html).
+1. Confirm the PoC flow is published (`infra/bin/verify-flow`; see [commands](infra/README.md)). Use an existing authorized Connect administrator; this PoC needs no new admin or agent.
+2. At [sea-team11-phone-demo](https://sea-team11-phone-demo.my.connect.aws/), open **Channels → Communication widgets** and create a **new** widget named `team-eleven-web-call-poc`. Choose **Web calling** (audio only), select `team-eleven-web-call-greeting`, allow `https://call-sea-hackathon.voidbox.io`, and turn **request security on**. Do not edit the team's existing widgets, flows or phone routing. Use the generated snippet and security key. See [AWS's JWT callback contract](https://docs.aws.amazon.com/connect/latest/adminguide/optional-widget-steps.html).
 3. In the **hosting** account's Systems Manager Parameter Store in Singapore, create these parameters as `SecureString` under `/sea-hackathon/connect-web-call/`. Use the console or your secret manager: never put values in chat, Git, shell history, a build argument or an SSM Run Command payload.
 
 | Parameter leaf | Value |
@@ -63,4 +61,4 @@ After the origin is healthy and anonymous access is denied, save a **new** hosti
 
 Use `connect-web-call/deploy/deploy plan-guard route infra/hosting/poc-route.tfplan` before approval. For an image-only rollback, redeploy the digest printed on the prior `previous_image=` line with `connect-web-call/deploy/deploy up --image '<repo>@sha256:<digest>'`. For a route rollback use `plan-guard route-off` against the separately saved removal plan. These guards read saved plans, never apply them.
 
-For rollback, first disable `poc_route_enabled` **keeping the registry enabled**; plan, review, then apply that saved plan. Stop only `sea-connect-web-call`. Retain the PoC image for recovery. Deleting the dedicated Connect instance/registry, or removing parameters, is a separate destructive operation requiring its own approval. Never destroy `Infra-Phone/` or the main hosting stack to roll back this demo.
+For rollback, disable `poc_route_enabled` while keeping the registry enabled; plan, review, and apply the saved removal plan. Stop only the `sea-connect-web-call` project. Removing PoC resources requires separate approval. Never remove the shared Connect instance, `Infra-Phone/` stack, or main hosting stack.

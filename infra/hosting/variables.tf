@@ -80,12 +80,12 @@ variable "budget_limit_usd" {
   default = 30
 }
 
-# --- Connect web-call PoC (off by default; the two switches are independent) ------------------
+# The registry has been provisioned in this hosting stack. Publishing the hostname remains opt-in.
 
 variable "poc_registry_enabled" {
-  description = "Create the PoC's own immutable ECR repository ({project}/connect-web-call). Independent of poc_route_enabled."
+  description = "Retain the shared stack's immutable PoC registry. Disable only for an explicitly reviewed teardown."
   type        = bool
-  default     = false
+  default     = true
 }
 
 variable "poc_route_enabled" {
