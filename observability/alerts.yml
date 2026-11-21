@@ -1,0 +1,17 @@
+groups:
+  - name: control-plane
+    rules:
+      - alert: OrchestratorAPIDown
+        expr: orchestrator_api_up == 0
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: The orchestrator API health probe is failing
+      - alert: OrchestratorMonitorDown
+        expr: up{job="orchestrator-monitor"} == 0
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: Prometheus cannot scrape the orchestrator monitor
