@@ -141,6 +141,7 @@ describe('documented embed snippet', () => {
     const byName = Object.fromEntries(queued);
     assert.equal(byName.snippetId, SNIPPET_ID, 'snippetId carries the snippet ID, not the widget ID');
     assert.deepEqual(byName.styles, WIDGET_STYLES);
+    assert.equal(byName.styles.iconType, 'VOICE', 'use the generated web-calling launcher');
     assert.equal(byName.authenticate, authenticate);
     assert.ok(!('customLaunchBehavior' in byName), 'no auto-launch: a call starts only from the widget');
     assert.equal(fetchSpy.calls.length, 0, 'installing the widget requests no token');

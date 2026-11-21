@@ -31,13 +31,11 @@ const SNIPPET_ID = /^[A-Za-z0-9+/_=-]{16,4096}$/;
 const DNS_LABEL = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 const JWT_SHAPE = /^[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{16,}$/;
 
-// Button colours in the documented `styles` shape, in the team portal palette. `iconType` is
-// omitted on purpose: AWS documents only CHAT and CHAT_VOICE (the sample snippet image), and
-// nothing public documents a value for an audio-only launcher. Which channels the widget offers
-// is decided by the widget configuration behind `snippetId`; this object only styles the button.
+// Use the audio-only widget's generated launcher style; channel access is configured in Connect.
 export const WIDGET_STYLES = Object.freeze({
-  openChat: Object.freeze({ color: '#ffffff', backgroundColor: '#152b25' }),
-  closeChat: Object.freeze({ color: '#ffffff', backgroundColor: '#152b25' }),
+  iconType: 'VOICE',
+  openChat: Object.freeze({ color: '#ffffff', backgroundColor: '#123456' }),
+  closeChat: Object.freeze({ color: '#ffffff', backgroundColor: '#123456' }),
 });
 
 const fail = (reason) => ({ ok: false, reason });
@@ -218,6 +216,10 @@ export function installWidgetLoader({ window: w, document: d, config, authentica
   const amazonConnect = w.amazon_connect;
   amazonConnect('styles', structuredClone(WIDGET_STYLES));
   amazonConnect('snippetId', config.snippetId);
-  amazonConnect('supportedMessagingContentTypes', ['text/plain', 'text/markdown']);
+  amazonConnect('supportedMessagingContentTypes', [
+    'text/plain', 'text/markdown',
+    'application/vnd.amazonaws.connect.message.interactive',
+    'application/vnd.amazonaws.connect.message.interactive.response',
+  ]);
   amazonConnect('authenticate', authenticate);
 }
