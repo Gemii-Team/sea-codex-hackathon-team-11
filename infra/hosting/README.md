@@ -36,8 +36,8 @@ bin/deploy placeholder              # expect: https://sea-hackathon.voidbox.io/ 
 restarts the stack on the server. The server runs that image as one container, `app`, serving HTTP on
 port 8080 (also passed in as `PORT`).
 
-The Cloud Orchestrator stack in this repository (api, monitor, frontend, prometheus) is several
-containers; `server/compose.yml` must grow to run it. That is not wired yet.
+An app made of several containers (for example an API, a worker and a frontend) needs more services
+in `server/compose.yml`; the tunnel then routes to whichever service serves the site.
 
 App secrets and settings live in SSM. Each parameter under `/sea-hackathon/app/` becomes an env var
 (single-line values). Redeploy after changing them. Keep values out of shell history, e.g.:
