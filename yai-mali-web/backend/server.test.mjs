@@ -373,6 +373,45 @@ describe('health and static files', () => {
     }
   });
 
+  test("a folder's index.html is its page: /network and /network/ serve it; a folder without one stays 404", async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'yai-pages-'));
+    const put = (rel, data) => {
+      mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true });
+      writeFileSync(path.join(dir, rel), data);
+    };
+    put('index.html', '<p>home</p>');
+    put('network/index.html', '<p>network</p>');
+    put('network/app.js', 'n()');
+    put('assets/logo.png', Buffer.from([0x89, 0x50]));
+    try {
+      await withServer(fakeProvider(), async (port) => {
+        for (const p of ['/network', '/network/', '/network/index.html']) {
+          const res = await request(port, { path: p });
+          assert.equal(res.status, 200, p);
+          assert.equal(res.headers['content-type'], 'text/html; charset=utf-8', p);
+          assert.equal(res.text, '<p>network</p>', p);
+        }
+        assert.equal((await request(port, { path: '/network/app.js' })).text, 'n()');
+        assert.equal((await request(port, { path: '/' })).text, '<p>home</p>');
+        for (const p of ['/assets', '/assets/', '/network//', '/network/index.html/', '/NETWORK']) {
+          assert.equal((await request(port, { path: p })).status, 404, p);
+        }
+        assert.equal((await request(port, { method: 'POST', path: '/network' })).status, 405);
+      }, { frontendDir: dir });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+    // The real network page is served at /network with the same security policy as the main page.
+    await withServer(fakeProvider(), async (port) => {
+      const main = await request(port, { path: '/' });
+      const page = await request(port, { path: '/network' });
+      assert.equal(page.status, 200);
+      assert.ok(page.body.equals(readFileSync(new URL('network/index.html', REAL_FRONTEND))));
+      assert.equal(page.headers['content-security-policy'], main.headers['content-security-policy']);
+      assert.match(page.headers['content-security-policy'], /style-src 'self';/);
+    });
+  });
+
   test('a frontend directory without index.html refuses to start', () => {
     const dir = mkdtempSync(path.join(tmpdir(), 'yai-empty-'));
     try {

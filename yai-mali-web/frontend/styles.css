@@ -111,3 +111,5 @@
 @media(max-width:850px){.hero{min-height:300px}.hero-art>img.hero-mascot{right:4px}}
 @media(max-width:680px){.hero{min-height:300px}.hero-art{width:34%}.hero-art>img.hero-mascot{right:-12px;height:200px}}
 .art-label{right:auto;left:7%;bottom:22px}
+/* The Scam network entry is a link to /network, styled like the view buttons. */
+a.nav-item{text-decoration:none}

@@ -55,8 +55,9 @@ const SEGMENT = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 
 /**
  * Reads every regular file under `dir` with a known content type into memory, keyed by URL
- * path ("/assets/logo.png"). Symlinks, dotfiles and unknown extensions are skipped, and "/" is
- * index.html. Throws when index.html is missing.
+ * path ("/assets/logo.png"). Symlinks, dotfiles and unknown extensions are skipped. "/" is
+ * index.html, and a folder's index.html is also its page ("/network" and "/network/").
+ * Throws when index.html is missing.
  */
 export function loadAssets(dir) {
   const assets = new Map();
@@ -74,6 +75,12 @@ export function loadAssets(dir) {
   walk(typeof dir === 'string' ? dir : fileURLToPath(dir), '/');
   const index = assets.get('/index.html');
   if (!index) throw new Error('frontend directory has no index.html');
+  for (const [key, asset] of [...assets]) {
+    if (key === '/index.html' || !key.endsWith('/index.html')) continue;
+    const folder = key.slice(0, -'index.html'.length);
+    assets.set(folder, asset);
+    assets.set(folder.slice(0, -1), asset);
+  }
   assets.set('/', index);
   return assets;
 }
