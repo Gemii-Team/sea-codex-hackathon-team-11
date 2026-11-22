@@ -4,7 +4,7 @@
 
 # Yai Mali (ยายมะลิ): an AI grandma who keeps scammers talking
 
-**Live submission: <https://sea-hackathon-dev.voidbox.io/>.** No login and no password. Open it in a desktop or mobile browser.
+**The live demo was taken down on 22 November 2026, after the hackathon.** During judging it ran at `https://sea-hackathon-dev.voidbox.io/` with no login. All hosting was destroyed with OpenTofu; to try Yai Mali now, see [Run and test locally](#run-and-test-locally).
 
 Team 11 · Sea × OpenAI Codex Hackathon Thailand · 21 November 2026.
 
@@ -34,7 +34,7 @@ In the demo **you play the scammer**. Everything is a simulation with fictional 
 5. **Scam network.** **Scam network** in the sidebar opens an investigation dashboard on **mock data**: 18 fictional entities, 24 evidence-linked relationships and 3 cases, with filters, search, path finding, a timeline and JSON export. It shows where collected clues would go next.
 6. **Language.** The interface opens in English. **EN | ไทย** in the top bar switches every page to Thai; Yai always speaks Thai.
 
-Voice calls are open until **23:59 Bangkok time on 21 Nov 2026** (no new call starts after 23:55). After that, calls are refused, but chat, the notebook, review and the network page keep working. **Judging after the cutoff?** Use chat (steps 1, 2, 4–6). The call behaviour is documented in the [evaluation](#evaluation) and the description of how voice works. See [Spend and abuse limits](#spend-and-abuse-limits).
+During judging, voice calls were open until **23:59 Bangkok time on 21 Nov 2026** (no new call started after 23:55); chat, the notebook, review and the network page stayed up until the takedown. The call behaviour is documented in the [evaluation](#evaluation) and the description of how voice works. See [Spend and abuse limits](#spend-and-abuse-limits).
 
 ---
 
@@ -160,12 +160,12 @@ Other suites: `node --test connect-web-call/backend/*.test.mjs` (78 tests), `nod
 
 ## Repository map
 
-| Path | What it is | Live |
+| Path | What it is | Hosted (taken down 22 Nov 2026) |
 |---|---|---|
-| [`yai-mali-web/`](yai-mali-web/README.md) | **The submission.** Yai Mali chat, voice, notebook, network dashboard; details on deploy, rollback and limits in its README | <https://sea-hackathon-dev.voidbox.io> |
-| [`frontend/`](frontend/), [`services/`](services/), [`internal/`](internal/), [`observability/`](observability/) | **Agent Studio**: the team's Svelte workspace for configuring Thai voice agents, with a Go API, a monitor and Prometheus alerts | <https://sea-hackathon.voidbox.io> |
+| [`yai-mali-web/`](yai-mali-web/README.md) | **The submission.** Yai Mali chat, voice, notebook, network dashboard; details on deploy, rollback and limits in its README | `sea-hackathon-dev.voidbox.io` |
+| [`frontend/`](frontend/), [`services/`](services/), [`internal/`](internal/), [`observability/`](observability/) | **Agent Studio**: the team's Svelte workspace for configuring Thai voice agents, with a Go API, a monitor and Prometheus alerts | `sea-hackathon.voidbox.io` |
 | [`Infra-Phone/`](Infra-Phone/README.md) | Thai WebRTC phone demo with OpenAI Realtime and S3 call history; the v1 [conversation JSON Schema](Infra-Phone/contracts/conversations/v1/conversation.schema.json) and a [synthetic example](Infra-Phone/contracts/conversations/v1/examples/demo-otp-request.json) | local only (also embedded in Agent Studio's dev server) |
-| [`connect-web-call/`](connect-web-call/README.md) | The earlier team voice demo (team sign-in) that first moved from Amazon Connect to OpenAI Realtime; Yai Mali's backend started as a copy of it | <https://call-sea-hackathon.voidbox.io> |
+| [`connect-web-call/`](connect-web-call/README.md) | The earlier team voice demo (team sign-in) that first moved from Amazon Connect to OpenAI Realtime; Yai Mali's backend started as a copy of it | `call-sea-hackathon.voidbox.io` |
 | [`infra/hosting/`](infra/hosting/README.md) | OpenTofu for the EC2 host, ECR, Cloudflare Tunnel and DNS, SSM parameters and budget; hosting runbook | — |
 
 To run Agent Studio locally, run `make up` (Docker Compose), then open <http://localhost:5173> for the console and <http://localhost:9090> for Prometheus. `make down` stops it.
